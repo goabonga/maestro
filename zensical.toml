@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+[project]
+site_name = "maestro"
+site_description = "A multi-model orchestrator for software development."
+site_author = "Chris"
+site_url = "https://goabonga.github.io/maestro/"
+repo_url = "https://github.com/goabonga/maestro"
+repo_name = "goabonga/maestro"
+nav = [
+    { "Introduction" = "index.md" },
+    { "Development" = [{ "Project structure" = "development/structure.md" }, { "GitHub automation" = "development/github.md" }] },
+    { "Versions" = "versions.md" },
+]
+
+copyright = """
+Made with <span style="color: #e25555;">&#10084;</span> by
+<a href="https://github.com/goabonga" target="_blank" rel="noopener">goabonga</a>
+"""
+
+[project.plugins.exclude]
+glob = ["overrides/**"]
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+"pymdownx.betterem" = {}
+"pymdownx.caret" = {}
+"pymdownx.details" = {}
+"pymdownx.inlinehilite" = {}
+"pymdownx.keys" = {}
+"pymdownx.magiclink" = {}
+"pymdownx.mark" = {}
+"pymdownx.smartsymbols" = {}
+"pymdownx.tilde" = {}
+"zensical.extensions.macros" = {}
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions."pymdownx.arithmatex"]
+generic = true
+
+[project.markdown_extensions."pymdownx.emoji"]
+emoji_generator = "zensical.extensions.emoji.to_svg"
+emoji_index = "zensical.extensions.emoji.twemoji"
+
+[project.markdown_extensions."pymdownx.highlight"]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+
+[project.markdown_extensions."pymdownx.superfences"]
+custom_fences = [{ name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" }]
+
+[project.markdown_extensions."pymdownx.tabbed"]
+alternate_style = true
+combine_header_slug = true
+
+[project.markdown_extensions."pymdownx.tasklist"]
+custom_checkbox = true
+
+[project.extra]
+generator = false
+
+[project.extra.versions]
+maestro_docs = "0.0.0"
+maestro_scripts = "0.0.0"
+maestro = "0.0.0"
+maestro_svc = "0.0.0"
+
+[project.theme]
+custom_dir = "docs/overrides"
+logo = "maestro.svg"
+favicon = "favicon.ico"
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "blue"
+accent = "light blue"
+toggle = { icon = "material/brightness-4", name = "Switch to light mode" }
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "blue"
+accent = "light blue"
+toggle = { icon = "material/brightness-7", name = "Switch to dark mode" }

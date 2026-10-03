@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+[project]
+commit_convention = "conventional"
+tag_format = "{component}-v{version}"
+initial_version = "0.0.0"
+post_bump_policy = "allow"
+overlap_policy = "all"
+
+[plugins.go-deps.packages]
+maestro = "./cmd/cli"
+maestro-svc = "./cmd/svc"
+
+[components.maestro-docs]
+paths = ["docs/**", "zensical.toml", "assets/maestro.svg"]
+bump_files = [
+    { file = "zensical.toml", key = "project.extra.versions.maestro_docs" },
+]
+changelog = "docs/CHANGELOG.md"
+
+[components.maestro-docs.bump_rules]
+docs = "patch"
+ci = "patch"
+refactor = "patch"
+style = "patch"
+test = "patch"
+build = "patch"
+revert = "patch"
+
+[components.maestro-scripts]
+paths = ["scripts/**", "pytest.ini", "Makefile", "multicz.toml", ".github/workflows/**"]
+bump_files = [{ file = "scripts/pyproject.toml", key = "project.version" }, { file = "zensical.toml", key = "project.extra.versions.maestro_scripts" }]
+changelog = "scripts/CHANGELOG.md"
+post_bump = ["uv lock --project scripts"]
+
+[components.maestro-scripts.bump_rules]
+docs = "patch"
+ci = "patch"
+refactor = "patch"
+style = "patch"
+test = "patch"
+build = "patch"
+revert = "patch"
+
+[components.maestro]
+paths = ["cmd/cli/**", "go.mod", "go.sum", ".github/workflows/ci.yml", "Makefile"]
+bump_files = [
+    { file = "cmd/cli/version.go", key = 'regex:Version\s*=\s*"([^"]+)"' },
+    { file = "zensical.toml", key = "project.extra.versions.maestro" },
+]
+changelog = "cmd/cli/CHANGELOG.md"
+
+[components.maestro.bump_rules]
+ci = "patch"
+refactor = "patch"
+test = "patch"
+build = "patch"
+revert = "patch"
+
+[components.maestro-svc]
+paths = ["cmd/svc/**", "go.mod", "go.sum", ".github/workflows/ci.yml", "Makefile"]
+bump_files = [
+    { file = "cmd/svc/version.go", key = 'regex:Version\s*=\s*"([^"]+)"' },
+    { file = "zensical.toml", key = "project.extra.versions.maestro_svc" },
+]
+changelog = "cmd/svc/CHANGELOG.md"
+
+[components.maestro-svc.bump_rules]
+ci = "patch"
+refactor = "patch"
+test = "patch"
+build = "patch"
+revert = "patch"

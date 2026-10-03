@@ -1,0 +1,14 @@
+# Generated documentation
+/site/
+
+# Python script bytecode
+__pycache__/
+
+# Local uv environment and pytest cache
+/scripts/.venv/
+.pytest_cache/
+
+# Local build outputs
+/bin/
+/dist/
+/coverage/

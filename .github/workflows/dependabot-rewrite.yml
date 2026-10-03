@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: dependabot-rewrite
+
+on:
+  workflow_run:
+    workflows: [dependabot-rewrite-signal]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  rewrite:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: dependabot-rewrite-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
+      - name: Validate the current pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SIGNAL_SHA: ${{ github.event.workflow_run.head_sha }}
+          SIGNAL_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 trusted/scripts/ci_automation.py validate-dependabot
+      - name: Checkout the validated commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reconcile the tracking issue and PR link
+        id: tracking
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: python3 trusted/scripts/track_dependabot_issue.py
+      - name: Configure the maintainer signing identity
+        working-directory: pr
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          PUSH_TOKEN: ${{ secrets.DEPENDABOT_PAT }}
+          GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL }}
+          GIT_SIGNING_KEY: ${{ vars.GIT_SIGNING_KEY }}
+        run: python3 "$GITHUB_WORKSPACE/trusted/scripts/ci_automation.py" configure-signing
+      - name: Rewrite commits using trusted Python
+        working-directory: pr
+        env:
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 "$GITHUB_WORKSPACE/trusted/scripts/ci_automation.py" rebase
+      - name: Push with an explicit lease
+        working-directory: pr
+        env:
+          GH_TOKEN: ${{ secrets.DEPENDABOT_PAT }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: python3 "$GITHUB_WORKSPACE/trusted/scripts/ci_automation.py" push
+      - name: Remove signing credentials
+        if: always()
+        run: |
+          if [ -f trusted/scripts/ci_automation.py ]; then
+            python3 trusted/scripts/ci_automation.py cleanup
+          fi
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
+          GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL }}
+        run: python3 trusted/scripts/ci_automation.py summary --title "Dependabot signed rewrite"

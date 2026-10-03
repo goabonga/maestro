@@ -1,0 +1,172 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+# Explicit controls: a custom configuration replaces the built-in defaults.
+# Audit runs first after checkout in .github/workflows/ci.yml.
+version: "2.0"
+github:
+  controls:
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      tags:
+      - latest
+      - dev
+      - development
+      - staging
+      - main
+      - master
+      containerImagesMustBePinnedByDigest: true
+    branchMustBeProtected:
+      enabled: true
+      namePatterns:
+      - main
+      - master
+      - release/*
+      - production
+      - dev
+      defaultMustBeProtected: true
+      allowForcePush: false
+      codeOwnerApprovalRequired: false
+    externalRefsMustNotCollide:
+      enabled: true
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+      forbiddenVariables:
+      - ACTIONS_STEP_DEBUG
+      - ACTIONS_RUNNER_DEBUG
+    securityJobsMustNotBeWeakened:
+      enabled: true
+      securityJobPatterns:
+      - '*codeql*'
+      - '*dependency-review*'
+      - '*trufflehog*'
+      - '*gitleaks*'
+      - '*osv-scanner*'
+      - '*semgrep*'
+      - '*trivy*'
+      - '*snyk*'
+      - '*-sast'
+      - '*-sast-*'
+      - '*-scan'
+      - '*scan*'
+      - '*-security'
+      - '*-security-*'
+      - '*-audit'
+      - '*-audit-*'
+      - '*secret*detect*'
+      - '*detect*secret*'
+      allowFailureMustBeFalse:
+        enabled: true
+      rulesMustNotBeRedefined:
+        enabled: true
+      whenMustNotBeManual:
+        enabled: true
+    pipelineMustNotExecuteUnverifiedScripts:
+      enabled: true
+    pipelineMustNotUseDockerInDocker:
+      enabled: true
+      detectInsecureDaemon: true
+    actionsMustBePinnedByCommitSha:
+      enabled: true
+      trustedOwners:
+      - actions
+      - github
+    githubActionMustComeFromAuthorizedSources:
+      enabled: true
+      trustGithubOfficialActions: true
+      trustSameOrgActions: true
+      trustedGithubActions:
+      - astral-sh/setup-uv
+      - getplumber/plumber
+    workflowMustNotInjectUserInputInScripts:
+      enabled: true
+    workflowMustNotWriteUntrustedContentToGitHubEnv:
+      enabled: true
+    # Signing Dependabot commits needs workflow_run and the maintainer key.
+    # The secretless signal, same-repository checks, immutable head validation,
+    # trusted default-branch script and disabled Git hooks protect the rewrite.
+    workflowMustNotUseDangerousTriggers:
+      enabled: false
+    # Signed merges check out only same-repository commits approved by a
+    # write-access labeller. Only trusted signing code and Git plumbing run;
+    # hooks are disabled and CI validates the signed head before merging.
+    pullRequestTargetMustNotCheckoutHead:
+      enabled: false
+    checkoutMustNotPersistCredentials:
+      enabled: true
+    workflowsMustDeclarePermissions:
+      enabled: true
+    reusableWorkflowsMustNotInheritSecrets:
+      enabled: true
+    workflowMustNotExportEntireSecretsContext:
+      enabled: true
+    workflowMustNotGrantPermissionsWriteAll:
+      enabled: true
+    actionsMustNotBeArchived:
+      enabled: true
+    actionRefsMustExistUpstream:
+      enabled: true
+    actionsMustNotCarryKnownCVEs:
+      enabled: true
+    actionsMustNotExecuteMutableRemoteCode:
+      enabled: true
+    releaseWorkflowsMustNotRestoreUntrustedCache:
+      enabled: true
+      publishActions:
+      - pypa/gh-action-pypi-publish
+      - JS-DevTools/npm-publish
+      - gradle/publish-plugin
+      - softprops/action-gh-release
+      - ncipollo/release-action
+      - goreleaser/goreleaser-action
+      - crazy-max/ghaction-docker-buildx
+      - changesets/action
+      cacheActions:
+      - action: actions/cache
+        mode: always
+      - action: actions/cache/restore
+        mode: always
+      - action: Swatinem/rust-cache
+        mode: always
+      - action: actions/setup-go
+        mode: default
+        disableInput: cache
+        disableValue: false
+      - action: gradle/actions/setup-gradle
+        mode: default
+        disableInput: cache-disabled
+        disableValue: true
+      - action: actions/setup-node
+        mode: opt-in
+        enableInput: cache
+      - action: actions/setup-python
+        mode: opt-in
+        enableInput: cache
+      - action: actions/setup-java
+        mode: opt-in
+        enableInput: cache
+      - action: pnpm/action-setup
+        mode: opt-in
+        enableInput: cache
+      - action: docker/build-push-action
+        mode: opt-in
+        enableInput: cache-from
+        enableContains: type=gha
+      publishScriptPatterns:
+      - (?i)(npm|pnpm|yarn|bun)\s+publish
+      - (?i)cargo\s+publish
+      - (?i)twine\s+upload
+      - (?i)poetry\s+publish
+      - (?i)gh\s+release\s+create
+      - (?i)goreleaser\s+release
+      - (?i)semantic-release
+      - (?i)gradlew?\b[^\n]*\bpublish
+      - (?i)\bmvnw?\b[^\n]*\bdeploy\b
+      - (?i)dotnet\s+nuget\s+push
+      - (?i)gem\s+push
+      - (?i)docker\s+push
+      publishScriptExcludePatterns:
+      - (?i)--dry-run
+      - (?i)publishToMavenLocal
+    workflowMustIncludeRequiredActions:
+      enabled: false

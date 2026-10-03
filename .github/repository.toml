@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+[settings]
+default_branch = "main"
+has_issues = true
+allow_merge_commit = false
+allow_squash_merge = false
+allow_rebase_merge = true
+
+[workflow_permissions]
+default_workflow_permissions = "read"
+can_approve_pull_request_reviews = false
+
+[variables]
+GIT_USER_NAME = "Chris"
+GIT_USER_EMAIL = "goabonga@pm.me"
+GIT_SIGNING_KEY = "588ED0DFE205A43D!"
+
+# Values are never stored here. init reads explicitly supplied environment
+# variables; check can verify existence only, not their content or scopes.
+[secrets]
+GPG_PRIVATE_KEY = true
+GPG_PASSPHRASE = true
+DEPENDABOT_PAT = true
+AUTO_MERGE_PAT = true
+RELEASE_PAT = true
+
+[tokens.DEPENDABOT_PAT]
+purpose = "Push signed Dependabot commits"
+[tokens.DEPENDABOT_PAT.permissions]
+Contents = "write"
+"Pull requests" = "read"
+Workflows = "write"
+
+[tokens.AUTO_MERGE_PAT]
+purpose = "Authorize and fast-forward signed commits into main"
+account_role = "Repository administrator allowed by the main-protection bypass"
+[tokens.AUTO_MERGE_PAT.permissions]
+Contents = "write"
+"Pull requests" = "read"
+Workflows = "write"
+Issues = "write"
+
+[tokens.RELEASE_PAT]
+purpose = "Push signed component releases and create GitHub releases"
+account_role = "Repository administrator allowed by the main-protection bypass"
+[tokens.RELEASE_PAT.permissions]
+Contents = "write"
+
+[labels.auto-merge]
+color = "0e8a16"
+description = "Applied to trigger auto-merge-signed.yml"
+
+[labels.bug]
+color = "d73a4a"
+description = "Something isn't working"
+
+[labels.enhancement]
+color = "a2eeef"
+description = "New feature or request"
+
+[labels.dependencies]
+color = "fc9513"
+description = "Dependency updates"
+
+[labels.go]
+color = "5c9da1"
+description = "Go dependency updates"
+
+[labels.github-actions]
+color = "a3ba3c"
+description = "GitHub Actions dependency updates"
+
+[labels.javascript]
+color = "a4c073"
+description = "JavaScript dependency updates"
+
+[[rulesets]]
+name = "main-protection"
+target = "branch"
+enforcement = "active"
+
+[[rulesets.bypass_actors]]
+# Preserve the source's administrator bypass for signed merge and release
+# pushes after the workflow has independently validated CI.
+actor_id = 5
+actor_type = "RepositoryRole"
+bypass_mode = "always"
+
+[rulesets.conditions.ref_name]
+include = ["refs/heads/main", "refs/heads/develop"]
+exclude = []
+
+[[rulesets.rules]]
+type = "required_signatures"
+
+[[rulesets.rules]]
+type = "non_fast_forward"
+
+[[rulesets.rules]]
+type = "deletion"
+
+[[rulesets.rules]]
+type = "required_linear_history"
+
+[[rulesets.rules]]
+type = "pull_request"
+[rulesets.rules.parameters]
+dismiss_stale_reviews_on_push = false
+require_code_owner_review = false
+require_last_push_approval = false
+required_approving_review_count = 0
+required_review_thread_resolution = false
+allowed_merge_methods = ["rebase"]
+
+[[rulesets.rules]]
+type = "required_status_checks"
+[rulesets.rules.parameters]
+strict_required_status_checks_policy = true
+do_not_enforce_on_create = false
+required_status_checks = [
+  {context = "audit"},
+  {context = "check commit signatures"},
+  {context = "detect changed components"},
+  {context = "check license headers"},
+  {context = "validate scripts"},
+  {context = "validate go"},
+  {context = "validate documentation"},
+]

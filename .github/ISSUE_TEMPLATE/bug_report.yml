@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: Bug report
+description: Report a problem with Maestro
+labels: [bug]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - CLI (maestro)
+        - Daemon (maestro-svc)
+        - Documentation
+        - Scripts and generated assets
+        - CI and dependency updates
+        - Project configuration
+    validations:
+      required: true
+
+  - type: input
+    id: revision
+    attributes:
+      label: Git revision
+      description: The branch or commit where the problem occurs.
+      placeholder: main or a commit SHA
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the problem and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact commands or configuration involved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include your operating system and relevant tool versions.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Include relevant output with tokens and secrets removed.
+      render: shell
+    validations:
+      required: false

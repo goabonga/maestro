@@ -1,0 +1,367 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Chris <goabonga@pm.me>
+
+name: ci
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  plumber:
+    name: audit
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Run Plumber compliance audit
+        uses: getplumber/plumber@d85d3b54f9be5b2a5de072e203209de865e6139c # v0.5.15
+        with:
+          min-points: "100"
+          config-file: .plumber.yaml
+          metadata-token: ${{ github.token }}
+          upload-sarif: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python3 scripts/ci_automation.py summary --title "Pipeline audit" --body "Plumber compliance audit."
+
+  components:
+    name: detect changed components
+    needs: plumber
+    runs-on: ubuntu-24.04
+    outputs:
+      changed: ${{ steps.components.outputs.changed }}
+      go: ${{ steps.components.outputs.go }}
+      base: ${{ steps.components.outputs.base }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          python-version: "3.12"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install multicz and Go dependency plugin
+        run: uv tool install multicz --with multicz-go-deps-plugin
+      - name: Validate multicz configuration
+        run: |
+          go list -deps ./cmd/...
+          make release-validate
+      - name: List changed multicz components
+        id: components
+        env:
+          JOB_STATUS: ${{ job.status }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: python3 scripts/ci_automation.py changed-components --ci
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python3 scripts/ci_automation.py summary --title "Component detection" --body "Multicz configuration and changed component list."
+
+  licenses:
+    name: check license headers
+    needs: components
+    if: needs.components.outputs.changed != '[]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check license headers
+        run: make license-check
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python3 scripts/ci_automation.py summary --title "License headers" --body "SPDX headers in scripts and GitHub configuration."
+
+  scripts:
+    name: validate scripts
+    needs: components
+    if: contains(fromJSON(needs.components.outputs.changed), 'maestro-scripts')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          python-version: "3.12"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install multicz and Go dependency plugin
+        run: uv tool install multicz --with multicz-go-deps-plugin
+      - name: Check script syntax and run the tests affected by the change
+        env:
+          BASE: ${{ needs.components.outputs.base }}
+        run: python3 scripts/ci_automation.py script-checks --since "$BASE"
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python3 scripts/ci_automation.py summary --title "Script validation" --body "Python syntax, and pytest for the test files the change affects (full suite for shared code)."
+
+  go:
+    name: validate go
+    needs: components
+    if: needs.components.outputs.go != '[]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check changed executables and imported internal packages
+        env:
+          GO_COMPONENTS: ${{ needs.components.outputs.go }}
+        run: |
+          for component in $(jq -r '.[]' <<< "$GO_COMPONENTS"); do
+            python3 scripts/check_go.py "$component"
+          done
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          GO_COMPONENTS: ${{ needs.components.outputs.go }}
+        run: python3 scripts/ci_automation.py summary --title "Go validation" --body "Formatting, vet, race tests, build and gosec for $GO_COMPONENTS."
+
+  documentation:
+    name: validate documentation
+    needs: components
+    if: contains(fromJSON(needs.components.outputs.changed), 'maestro-docs')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          python-version: "3.12"
+      - name: Verify generated branding
+        run: |
+          make icons
+          git diff --exit-code -- assets/maestro.svg docs/maestro.svg docs/favicon.ico
+      - name: Build documentation
+        run: make docs
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python3 scripts/ci_automation.py summary --title "Documentation validation" --body "Generated branding and documentation build."
+
+  signatures:
+    name: check commit signatures
+    needs: plumber
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify every pull request commit signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 scripts/ci_automation.py verify-signatures
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python3 scripts/ci_automation.py summary --title "Commit signatures" --body "Every PR commit must carry a signature verified by GitHub."
+
+  release-bump:
+    # multicz decides what changed and bumps it; this job only runs it. A chore
+    # commit produces an empty plan, so nothing is bumped, pushed or released.
+    name: release bump
+    needs: [plumber, components, licenses, scripts, go, documentation]
+    if: >-
+      !failure() && !cancelled() &&
+      needs.components.outputs.changed != '[]' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'chore(release):')))
+    runs-on: ubuntu-24.04
+    outputs:
+      tags: ${{ steps.bump.outputs.tags }}
+      sha: ${{ steps.bump.outputs.sha }}
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+      PUSH_TOKEN: ${{ secrets.RELEASE_PAT }}
+      GIT_USER_NAME: ${{ vars.GIT_USER_NAME }}
+      GIT_USER_EMAIL: ${{ vars.GIT_USER_EMAIL }}
+      GIT_SIGNING_KEY: ${{ vars.GIT_SIGNING_KEY }}
+      # Git authenticates through the GitHub CLI for this job only; the token is
+      # never written to .git/config, so the checkout does not persist it.
+      GIT_CONFIG_COUNT: "2"
+      GIT_CONFIG_KEY_0: credential.helper
+      GIT_CONFIG_VALUE_0: ""
+      GIT_CONFIG_KEY_1: credential.helper
+      GIT_CONFIG_VALUE_1: "!gh auth git-credential"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          python-version: "3.12"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install multicz and Go dependency plugin
+        run: uv tool install multicz --with multicz-go-deps-plugin
+      - name: Configure maintainer signing identity
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: python3 scripts/ci_automation.py configure-signing
+      - name: Bump, tag and push changed components
+        id: bump
+        run: |
+          set -euo pipefail
+          if [ "$(multicz plan --output json | jq '.bumps | length')" = "0" ]; then
+            echo "No component to bump."
+            echo "tags=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          multicz bump --commit --tag --sign --push --summary "$GITHUB_STEP_SUMMARY" \
+            --commit-message "chore(release): bump changed components" --output json > /tmp/release.json
+          echo "tags=$(jq -c '[.bumps | to_entries[] | "\(.key)-v\(.value.next_version)"]' /tmp/release.json)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Remove signing material
+        if: always()
+        run: python3 scripts/ci_automation.py cleanup
+
+  release:
+    # One job per bumped component tag: build its assets, then cut its GitHub release.
+    name: release ${{ matrix.tag }}
+    needs: release-bump
+    if: needs.release-bump.outputs.tags != '[]' && needs.release-bump.outputs.tags != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: ${{ fromJSON(needs.release-bump.outputs.tags || '[]') }}
+    runs-on: ubuntu-24.04
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+      TAG: ${{ matrix.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ matrix.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          python-version: "3.12"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install multicz and Go dependency plugin
+        run: uv tool install multicz --with multicz-go-deps-plugin
+      - name: Build release assets
+        run: |
+          set -euo pipefail
+          name="${TAG%-v*}"
+          mkdir -p dist
+          entry=""
+          case "$name" in
+            maestro) entry=./cmd/cli ;;
+            maestro-svc) entry=./cmd/svc ;;
+            maestro-docs)
+              make docs
+              tar -C site -czf "dist/${TAG}.tar.gz" .
+              ;;
+          esac
+          if [ -n "$entry" ]; then
+            for arch in amd64 arm64; do
+              CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "dist/${TAG}-linux-${arch}" "$entry"
+            done
+          fi
+          if compgen -G "dist/*" > /dev/null; then
+            (cd dist && sha256sum * > "${TAG}-checksums.txt")
+          fi
+      - name: Create GitHub release with notes and assets
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(dist/*)
+          multicz release-notes --tag "$TAG" \
+            | gh release create "$TAG" --verify-tag --title "$TAG" --notes-file - "${assets[@]}"
+
+  pages:
+    name: publish documentation
+    needs: release-bump
+    if: needs.release-bump.outputs.sha != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-bump.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+          python-version: "3.12"
+      - name: Build released documentation
+        run: make docs
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        with:
+          path: site
+      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+        id: deployment
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: >-
+          python3 scripts/ci_automation.py summary --title "Documentation publication"
+          --body "Commit: ${{ needs.release-bump.outputs.sha }}.
+          URL: ${{ steps.deployment.outputs.page_url || 'not published' }}."

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  SPDX-License-Identifier: MIT
+  Copyright (c) 2026 Chris <goabonga@pm.me>
+
+  maestro master logo. The documentation logo and favicon use this artwork.
+  A conductor hub routes work to three independent model nodes.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Rounded shell, then the screen it frames -->
+  <rect x="16" y="16" width="224" height="224" rx="52" fill="#1565C0"/>
+  <rect x="34" y="34" width="188" height="188" rx="40" fill="#081018"/>
+  <!-- Routes: the orchestrator dispatching tasks to each model -->
+  <g stroke="#4FC3F7" stroke-width="9" stroke-linecap="round">
+    <line x1="128" y1="128" x2="72" y2="72"/>
+    <line x1="128" y1="128" x2="184" y2="72"/>
+    <line x1="128" y1="128" x2="128" y2="186"/>
+  </g>
+  <!-- Model nodes, each with its own accent -->
+  <g fill="#1565C0" stroke="#4FC3F7" stroke-width="6">
+    <circle cx="72" cy="72" r="18"/>
+    <circle cx="184" cy="72" r="18"/>
+    <circle cx="128" cy="186" r="18"/>
+  </g>
+  <circle cx="72" cy="72" r="7" fill="#FFCA28"/>
+  <circle cx="184" cy="72" r="7" fill="#81C784"/>
+  <circle cx="128" cy="186" r="7" fill="#F48FB1"/>
+  <!-- Conductor hub -->
+  <circle cx="128" cy="128" r="26" fill="#081018" stroke="#4FC3F7" stroke-width="8"/>
+  <circle cx="128" cy="128" r="11" fill="#4FC3F7"/>
+</svg>
