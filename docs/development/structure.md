@@ -211,6 +211,14 @@ stored in SQLite with its receipt time and the SHA-256 of its content,
 once: a second document under the same artifact id is refused, never
 overwritten.
 
+A missing or invalid document gets one bounded second chance. Maestro
+fingerprints the worktree — HEAD, index, and every change to tracked
+or untracked files, the handoff directory aside — and asks for a format
+repair in a new attempt. The repair is accepted only if the fingerprint
+is unchanged and its document is valid: a new or moved commit, a staged
+change, an edited or added file, a second missing or invalid document,
+or an error that is neither missing nor invalid blocks the task instead.
+
 ## Durable store
 
 All durable state lives in one SQLite database opened with WAL
