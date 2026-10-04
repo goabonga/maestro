@@ -40,6 +40,8 @@ func Run(ctx context.Context, args []string, output io.Writer, version string) e
 		return initProject(flags.Args()[1:], output)
 	case "status":
 		return status(ctx, flags.Args()[1:], output)
+	case "daemon":
+		return daemonCommand(ctx, flags.Args()[1:], output)
 	case "project":
 		return projectCommand(flags.Args()[1:], output)
 	case "worktree":
