@@ -218,3 +218,14 @@ func TestStopIsIdempotentAfterExit(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCommandExposesTheConfinedBuilder(t *testing.T) {
+	launcher := &Launcher{bwrap: "/usr/bin/bwrap", prlimit: "/usr/bin/prlimit"}
+	command, err := launcher.Command(Spec{Argv: []string{"/bin/true"}, Dir: "/work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.Path != "/usr/bin/bwrap" || len(command.Env) != 0 {
+		t.Fatalf("path=%s env=%v", command.Path, command.Env)
+	}
+}
