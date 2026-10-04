@@ -62,6 +62,10 @@ one directory per registered project:
     repository.git/                 private canonical repository
     worker-repositories/
         <worker>.git/               private clone of one worker
+    worktrees/
+        <worker>/tasks/<task-id>/   worktree of one task
+    quarantine/
+        <entry>/                    abandoned dirty worktree and its record
 ```
 
 Every repository under a project is a bare clone with fully copied
@@ -70,6 +74,16 @@ another one through Git metadata. A worker repository keeps no remote;
 the daemon moves commits explicitly — it provisions a worker branch from
 the canonical integration head and imports a worker branch back under
 `refs/maestro/workers/<worker>/`, never the other way around.
+
+Each task works in its own worktree of the worker repository, on the
+branch `maestro/task-<id>`. The branch belongs to the task, not to the
+worker: it keeps its commits when its worktree is removed and when the
+task resumes, so a later checkout carries on from the kept head. Removal
+only goes through `git worktree remove` followed by `prune`, and only on
+a clean worktree, verified through `git rev-parse` rather than a
+reconstructed path. A dirty worktree is never force-deleted: abandoning
+one moves it under `quarantine/` with a record of its branch and original
+path, still registered with its worker repository.
 
 ## Local development
 
