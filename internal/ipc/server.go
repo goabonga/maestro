@@ -18,6 +18,9 @@ type Server struct {
 	Store   worktree.Store
 	Service string
 	Version string
+
+	// Shutdown asks the daemon to stop; nil disables the stop route.
+	Shutdown func()
 }
 
 // projectView is the JSON shape of a project.
@@ -37,10 +40,23 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /v1/projects", s.listProjects)
 	mux.HandleFunc("POST /v1/projects", idempotent(s.DB, s.registerProject))
+	mux.HandleFunc("POST /v1/daemon/stop", s.stopDaemon)
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusNotFound, CodeNotFound, "unknown route: "+r.URL.Path)
 	})
 	return mux
+}
+
+// stopDaemon asks the daemon to shut down gracefully. Stopping is
+// idempotent by nature — a stopped daemon no longer answers — so the
+// route carries no idempotency key.
+func (s *Server) stopDaemon(w http.ResponseWriter, r *http.Request) {
+	if s.Shutdown == nil {
+		fail(w, r, http.StatusNotFound, CodeNotFound, "this daemon cannot be stopped over its API")
+		return
+	}
+	reply(w, r, http.StatusOK, map[string]string{"status": "stopping"})
+	s.Shutdown()
 }
 
 // listProjects returns every registered project.

@@ -197,3 +197,23 @@ func requestHashForTest(method, path string, body []byte) string {
 	sum := sha256.Sum256(append([]byte(method+" "+path+"\n"), body...))
 	return hex.EncodeToString(sum[:])
 }
+
+func TestStopRouteTriggersShutdown(t *testing.T) {
+	server, web := newServer(t)
+	status, envelope, _ := call(t, web, "POST", "/v1/daemon/stop", nil, "")
+	if status != http.StatusNotFound || envelope.Error == nil {
+		t.Fatalf("status=%d envelope=%+v", status, envelope)
+	}
+
+	stopped := make(chan struct{})
+	server.Shutdown = func() { close(stopped) }
+	status, envelope, _ = call(t, web, "POST", "/v1/daemon/stop", nil, "")
+	if status != http.StatusOK || envelope.Error != nil {
+		t.Fatalf("status=%d envelope=%+v", status, envelope)
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("shutdown was not triggered")
+	}
+}
