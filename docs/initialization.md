@@ -48,3 +48,33 @@ Project data lives outside the repository, in the first of:
 
 Each project occupies `projects/<id>/` with its `repository.git` canonical
 clone and its `project.json` metadata.
+
+## Listing projects
+
+`maestro project list` prints every registered project with its
+identifier, the canonical path of its repository and its state — `ok`
+when the repository is reachable, `missing` when its path is gone:
+
+```console
+$ maestro project list
+ID                                    REPOSITORY                STATE
+6b1f6d3a-…                            /home/me/my-project/.git  ok
+```
+
+## Relocating a moved repository
+
+Moving a repository on disk does not change its project: registration
+follows the repository, not the path. After a move, point the project at
+the new location:
+
+```console
+$ maestro project relocate 6b1f6d3a-… ~/src/new-location
+project 6b1f6d3a-… now at /home/me/src/new-location/.git
+```
+
+`relocate` verifies the target before updating anything, under the user
+lock: the path must be a Git repository whose branches contain the
+project's imported history, and must not already belong to another
+project. A path change never creates a project implicitly, and two
+distinct clones keep two distinct projects even when their contents are
+identical.
