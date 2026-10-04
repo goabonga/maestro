@@ -10,7 +10,7 @@ component owns it, and how the pieces depend on each other.
 | --- | --- |
 | `cmd/cli/` | Entry point of the `maestro` command. Only wires flags, signals and `internal/cli`. |
 | `cmd/svc/` | Entry point of the `maestro-svc` daemon: flags, user lock, store migration, socket serving. |
-| `internal/cli/` | Command logic: `--version`, help and the `init`, `status`, `daemon`, `project`, `worktree list`, `diff`, `backup`, `restore` and `gc` subcommands. |
+| `internal/cli/` | Command logic: `--version`, help and the `init`, `status`, `daemon`, `project`, `worktree list`, `diff`, `attach`, `backup`, `restore` and `gc` subcommands. |
 | `internal/transport/` | Unix socket listener and client, HTTP serving with graceful shutdown, `/healthz`. |
 | `internal/worktree/` | Project store: the data directory, the canonical repository import and the private per-worker clones. |
 | `internal/state/` | Durable store: the SQLite database, its ordered migrations, the advisory file locks, backup/restore and GC. |
@@ -148,6 +148,16 @@ a one-byte type (`o` output, `i` input, `r` resize, `d` detach,
 write has a deadline: a client that stops reading is hung up on, and
 the session keeps running. A detach frame ends the stream only; the
 session survives it.
+
+`maestro attach <session>` is the client side of that stream. It
+upgrades the connection first and only then switches the user's
+terminal to raw mode, so a refused attach never touches the terminal.
+It relays keystrokes as input frames and output frames to the screen,
+sends the terminal size on attach and again on every `SIGWINCH`, and
+leaves on `Ctrl-]` with a detach frame. The previous terminal settings
+are restored by a deferred call on every exit path — detach, session
+end, connection error. The daemon does not create sessions yet; the
+command is exercised against fixture sessions in the tests.
 
 ## Durable store
 
