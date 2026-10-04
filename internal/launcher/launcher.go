@@ -42,9 +42,12 @@ type Spec struct {
 	// Argv is the explicit command line; never a shell string built
 	// from task text.
 	Argv []string
-	// Dir is the group's only writable project path, bound at the
-	// same path and used as the working directory.
+	// Dir is the group's project path, bound at the same path and used
+	// as the working directory; writable unless DirReadOnly is set.
 	Dir string
+	// DirReadOnly binds Dir read-only: a group that may read the sources
+	// but must not change them (end of turn, review, repair).
+	DirReadOnly bool
 	// ReadOnly lists extra paths bound read-only.
 	ReadOnly []string
 	// Writable lists extra paths bound writable (private HOME, tmp).
@@ -123,7 +126,11 @@ func (l *Launcher) arguments(spec Spec) ([]string, error) {
 	for _, path := range spec.ReadOnly {
 		args = append(args, "--ro-bind", path, path)
 	}
-	args = append(args, "--bind", spec.Dir, spec.Dir)
+	if spec.DirReadOnly {
+		args = append(args, "--ro-bind", spec.Dir, spec.Dir)
+	} else {
+		args = append(args, "--bind", spec.Dir, spec.Dir)
+	}
 	for _, path := range spec.Writable {
 		args = append(args, "--bind", path, path)
 	}

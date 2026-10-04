@@ -229,3 +229,27 @@ func TestCommandExposesTheConfinedBuilder(t *testing.T) {
 		t.Fatalf("path=%s env=%v", command.Path, command.Env)
 	}
 }
+
+func TestReadOnlyWorkdirRefusesWrites(t *testing.T) {
+	launcher := sandbox(t)
+	work := t.TempDir()
+	output, err := runIn(t, launcher, Spec{
+		Argv:        []string{"/bin/sh", "-c", "cat /dev/null > attempt.txt"},
+		Dir:         work,
+		DirReadOnly: true,
+	})
+	if err == nil {
+		t.Fatalf("a read-only workdir accepted a write: %s", output)
+	}
+	if _, statErr := os.Stat(filepath.Join(work, "attempt.txt")); !os.IsNotExist(statErr) {
+		t.Fatal("the write reached the host")
+	}
+	// The sources stay readable.
+	if err := os.WriteFile(filepath.Join(work, "source.txt"), []byte("kept\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output, err = runIn(t, launcher, Spec{Argv: []string{"/bin/cat", "source.txt"}, Dir: work, DirReadOnly: true})
+	if err != nil || output != "kept" {
+		t.Fatalf("read failed: %v: %q", err, output)
+	}
+}
