@@ -198,6 +198,19 @@ worker or configuration never satisfies a turn — and an implementation's
 commit list must be exactly Git's first-parent chain from the task base
 to the source head.
 
+On disk, an agent writes `.maestro/handoff/<turn>/<attempt>.json.tmp`
+in its worktree and renames it to `.json`, so a partial file never has
+the final name. Maestro reads only that exact path, built from
+validated identifiers: every component must be a real entry (no
+symbolic link, even one pointing inside the worktree), the file is
+opened without following links and without blocking (a named pipe
+planted there cannot stall the daemon), must be a regular file of at
+most 1 MiB, and must name the current attempt. A missing document is
+reported as such, distinct from an invalid one. An accepted document is
+stored in SQLite with its receipt time and the SHA-256 of its content,
+once: a second document under the same artifact id is refused, never
+overwritten.
+
 ## Durable store
 
 All durable state lives in one SQLite database opened with WAL
