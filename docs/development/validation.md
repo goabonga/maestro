@@ -10,7 +10,8 @@ committed fixture and checks that it is sanitized, free of detectable
 secrets, labelled after its path and replayable.
 
 A failed or unexercised mandatory case blocks the driver for that
-version. An allowed driver is allowed for its reference version only,
+version. The allowed ranges are the ones registered in
+`internal/agent` and checked by `maestro agent doctor`. An allowed driver is allowed for its reference version only,
 and only under the conditions its observations impose.
 
 ## Reference versions
