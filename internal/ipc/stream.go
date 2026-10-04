@@ -77,6 +77,10 @@ func pump(connection net.Conn, reader *bufio.Reader, live *session.Session) {
 		return WriteFrame(connection, kind, payload)
 	}
 
+	// leaving is closed when the pump itself ends the subscription — a
+	// detach or a client hang-up — so its closure is not mistaken for a
+	// slow client.
+	leaving := make(chan struct{})
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
@@ -94,6 +98,12 @@ func pump(connection net.Conn, reader *bufio.Reader, live *session.Session) {
 				}
 				chunk = chunk[len(piece):]
 			}
+		}
+		select {
+		case <-leaving:
+			_ = connection.Close()
+			return
+		default:
 		}
 		// The subscription closed: the session ended, or this client
 		// was too slow and lost its queue. Say which, then hang up.
@@ -125,6 +135,7 @@ func pump(connection net.Conn, reader *bufio.Reader, live *session.Session) {
 				_ = write(FrameError, []byte(err.Error()))
 			}
 		case FrameDetach:
+			close(leaving)
 			cancel()
 			<-finished
 			return
@@ -132,6 +143,7 @@ func pump(connection net.Conn, reader *bufio.Reader, live *session.Session) {
 			_ = write(FrameError, []byte("unexpected frame from the client"))
 		}
 	}
+	close(leaving)
 	cancel()
 	<-finished
 }
