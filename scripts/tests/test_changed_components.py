@@ -138,13 +138,13 @@ def test_go_plugin_and_frontend_dependency_select_actual_consumers(tmp_path, mon
     monkeypatch.chdir(tmp_path)
     for directory in ("cmd", "internal"):
         shutil.copytree(root / directory, tmp_path / directory)
-    for filename in ("go.mod", "multicz.toml", "zensical.toml", "scripts/pyproject.toml"):
+    for filename in ("go.mod", "go.sum", "multicz.toml", "zensical.toml", "scripts/pyproject.toml"):
         target = tmp_path / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((root / filename).read_bytes())
     for command in [["git", "init", "-b", "main"], ["git", "config", "user.name", "Test"],
                     ["git", "config", "user.email", "test@example.test"], ["git", "config", "commit.gpgsign", "false"],
-                    ["git", "add", "cmd", "internal", "go.mod", "multicz.toml", "zensical.toml", "scripts/pyproject.toml"],
+                    ["git", "add", "cmd", "internal", "go.mod", "go.sum", "multicz.toml", "zensical.toml", "scripts/pyproject.toml"],
                     ["git", "commit", "-m", "chore: initialize project"]]:
         subprocess.run(command, check=True, capture_output=True)
     base = ci.git("rev-parse", "HEAD")
