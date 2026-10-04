@@ -17,9 +17,20 @@ import (
 
 var (
 	buildOnce   sync.Once
+	buildDir    string
 	builtDaemon string
 	buildErr    error
 )
+
+// TestMain removes the daemon binary the lifecycle tests build once:
+// t.TempDir cannot outlive the test that created it.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if buildDir != "" {
+		_ = os.RemoveAll(buildDir)
+	}
+	os.Exit(code)
+}
 
 // daemonBinary builds maestro-svc once for the lifecycle tests.
 func daemonBinary(t *testing.T) string {
@@ -30,6 +41,7 @@ func daemonBinary(t *testing.T) string {
 			buildErr = err
 			return
 		}
+		buildDir = dir
 		builtDaemon = filepath.Join(dir, "maestro-svc")
 		command := exec.Command("go", "build", "-o", builtDaemon, "../../cmd/svc")
 		if output, err := command.CombinedOutput(); err != nil {
