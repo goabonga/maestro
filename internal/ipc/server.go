@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/worktree"
 )
@@ -21,6 +22,9 @@ type Server struct {
 
 	// Shutdown asks the daemon to stop; nil disables the stop route.
 	Shutdown func()
+
+	// Capacity exposes the global ceilings; nil hides them in status.
+	Capacity *scheduler.Capacity
 }
 
 // projectView is the JSON shape of a project.
@@ -41,10 +45,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects", s.listProjects)
 	mux.HandleFunc("POST /v1/projects", idempotent(s.DB, s.registerProject))
 	mux.HandleFunc("POST /v1/daemon/stop", s.stopDaemon)
+	mux.HandleFunc("GET /v1/status", s.status)
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusNotFound, CodeNotFound, "unknown route: "+r.URL.Path)
 	})
 	return mux
+}
+
+// status reports the daemon identity and the global capacity:
+// consumption, ceilings and the per-project detail.
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	document := map[string]interface{}{"service": s.Service, "version": s.Version}
+	if s.Capacity != nil {
+		document["capacity"] = s.Capacity.Usage()
+	}
+	reply(w, r, http.StatusOK, document)
 }
 
 // stopDaemon asks the daemon to shut down gracefully. Stopping is
