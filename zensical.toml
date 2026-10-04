@@ -13,6 +13,7 @@ nav = [
     { "Project initialization" = "initialization.md" },
     { "Inspecting worktrees" = "worktrees.md" },
     { "Running the daemon" = "daemon.md" },
+    { "Backup, restore and cleanup" = "maintenance.md" },
     { "Development" = [{ "Project structure" = "development/structure.md" }, { "GitHub automation" = "development/github.md" }] },
     { "Versions" = "versions.md" },
 ]
