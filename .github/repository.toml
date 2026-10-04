@@ -72,10 +72,6 @@ description = "Go dependency updates"
 color = "a3ba3c"
 description = "GitHub Actions dependency updates"
 
-[labels.javascript]
-color = "a4c073"
-description = "JavaScript dependency updates"
-
 [[rulesets]]
 name = "main-protection"
 target = "branch"
