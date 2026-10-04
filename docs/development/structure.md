@@ -10,7 +10,7 @@ component owns it, and how the pieces depend on each other.
 | --- | --- |
 | `cmd/cli/` | Entry point of the `maestro` command. Only wires flags, signals and `internal/cli`. |
 | `cmd/svc/` | Entry point of the `maestro-svc` daemon. Registers its handler with `internal/transport`. |
-| `internal/cli/` | Command logic: `--version`, help and the `init` and `status` subcommands. |
+| `internal/cli/` | Command logic: `--version`, help and the `init`, `status`, `worktree list` and `diff` subcommands. |
 | `internal/transport/` | Unix socket listener and client, HTTP serving with graceful shutdown, `/healthz`. |
 | `internal/worktree/` | Project store: the data directory, the canonical repository import and the private per-worker clones. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
