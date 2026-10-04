@@ -13,6 +13,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/cli/` | Command logic: `--version`, help and the `init`, `status`, `worktree list` and `diff` subcommands. |
 | `internal/transport/` | Unix socket listener and client, HTTP serving with graceful shutdown, `/healthz`. |
 | `internal/worktree/` | Project store: the data directory, the canonical repository import and the private per-worker clones. |
+| `internal/state/` | Durable store: the SQLite database, its ordered migrations and the advisory file locks. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -21,7 +22,8 @@ component owns it, and how the pieces depend on each other.
 | `zensical.toml` | Site configuration, navigation and the version table read by the docs. |
 | `Makefile` | Entry points for every local check and build. |
 
-Go code uses only the standard library and is pinned by `go.mod`.
+Go dependencies are pinned by `go.mod` and kept minimal: the standard
+library plus `modernc.org/sqlite` (SQLite without CGO).
 
 ## Components
 
@@ -84,6 +86,18 @@ a clean worktree, verified through `git rev-parse` rather than a
 reconstructed path. A dirty worktree is never force-deleted: abandoning
 one moves it under `quarantine/` with a record of its branch and original
 path, still registered with its worker repository.
+
+## Durable store
+
+All durable state lives in one SQLite database opened with WAL
+journaling, `synchronous=FULL` (proofs must survive a crash), enforced
+foreign keys and owner-only permissions. The schema is versioned by
+ordered, consecutive migrations: each step runs in its own transaction,
+a database holding data is backed up (`VACUUM INTO`) before migrating,
+and an older daemon refuses a schema newer than it knows — there is no
+automatic downgrade. Exclusive advisory file locks (`flock`) guard
+cross-process critical sections; the kernel drops them when the holder
+dies, so no PID file or lock-file existence is ever trusted.
 
 ## Local development
 
