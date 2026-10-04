@@ -87,16 +87,20 @@ func (s Store) Init(path string) (Project, bool, error) {
 		_ = os.RemoveAll(project.Dir)
 		return Project{}, false, err
 	}
-	metadata, err := json.MarshalIndent(project, "", "  ")
-	if err != nil {
-		_ = os.RemoveAll(project.Dir)
-		return Project{}, false, err
-	}
-	if err := os.WriteFile(filepath.Join(project.Dir, "project.json"), append(metadata, '\n'), 0o600); err != nil {
+	if err := s.writeMetadata(project); err != nil {
 		_ = os.RemoveAll(project.Dir)
 		return Project{}, false, err
 	}
 	return project, true, nil
+}
+
+// marshalProject renders a project's record.
+func marshalProject(project Project) ([]byte, error) {
+	metadata, err := json.MarshalIndent(project, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(metadata, '\n'), nil
 }
 
 // Find returns the project registered for the repository containing path.
