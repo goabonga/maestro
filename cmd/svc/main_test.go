@@ -145,3 +145,61 @@ func waitForSocket(t *testing.T, socket string, finished <-chan error) {
 	}
 	t.Fatal("daemon did not start listening")
 }
+
+func TestRunRefusesASecondDaemonForTheSameUser(t *testing.T) {
+	data := shortDir(t)
+	t.Setenv("MAESTRO_DATA_HOME", data)
+	socket := filepath.Join(shortDir(t), "svc.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	var output bytes.Buffer
+	go func() { finished <- run(ctx, []string{"--socket", socket}, &output) }()
+	waitForSocket(t, socket, finished)
+
+	// A different socket does not allow a second daemon.
+	other := filepath.Join(shortDir(t), "other.sock")
+	var second bytes.Buffer
+	err := run(context.Background(), []string{"--socket", other}, &second)
+	if err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("error %v", err)
+	}
+
+	cancel()
+	if err := <-finished; err != nil {
+		t.Fatalf("daemon stopped with %v", err)
+	}
+}
+
+func TestRunStopsOnTheStopRoute(t *testing.T) {
+	t.Setenv("MAESTRO_DATA_HOME", shortDir(t))
+	socket := filepath.Join(shortDir(t), "svc.sock")
+	finished := make(chan error, 1)
+	var output bytes.Buffer
+	go func() { finished <- run(context.Background(), []string{"--socket", socket}, &output) }()
+	waitForSocket(t, socket, finished)
+
+	request, err := http.NewRequest(http.MethodPost, "http://maestro/v1/daemon/stop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := transport.Client(socket).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", response.StatusCode)
+	}
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("daemon stopped with %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("daemon did not stop after the stop route")
+	}
+	if _, err := os.Stat(socket); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("socket left behind: %v", err)
+	}
+}

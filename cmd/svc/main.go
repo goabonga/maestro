@@ -55,6 +55,13 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Exactly one daemon per user, whatever socket it was given: the
+	// kernel drops this lock when the process dies, so no PID file.
+	daemonLock, err := state.Acquire(filepath.Join(store.Base, "daemon.lock"))
+	if err != nil {
+		return fmt.Errorf("another maestro-svc is already running for this user: %w", err)
+	}
+	defer func() { _ = daemonLock.Release() }()
 	lock, err := state.Acquire(filepath.Join(store.Base, "lock"))
 	if err != nil {
 		return err
@@ -79,6 +86,8 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		return err
 	}
 
-	server := &ipc.Server{DB: db, Store: store, Service: "maestro-svc", Version: Version}
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	server := &ipc.Server{DB: db, Store: store, Service: "maestro-svc", Version: Version, Shutdown: stop}
 	return transport.Serve(ctx, listener, server.Handler())
 }
