@@ -55,6 +55,7 @@ func TestRunRejectsExtraArgument(t *testing.T) {
 }
 
 func TestRunServesHealthOnSocketAndStopsOnCancel(t *testing.T) {
+	t.Setenv("MAESTRO_DATA_HOME", shortDir(t))
 	socket := filepath.Join(shortDir(t), "svc.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -80,6 +81,25 @@ func TestRunServesHealthOnSocketAndStopsOnCancel(t *testing.T) {
 		t.Fatalf("%d %v", response.StatusCode, body)
 	}
 
+	// The versioned API answers on the same socket with its envelope.
+	listing, err := http.NewRequest(http.MethodGet, "http://maestro/v1/projects", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing.Header.Set("X-Request-Id", "req-1")
+	answer, err := transport.Client(socket).Do(listing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer answer.Body.Close()
+	var envelope map[string]any
+	if err := json.NewDecoder(answer.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if answer.StatusCode != http.StatusOK || envelope["request_id"] != "req-1" {
+		t.Fatalf("%d %v", answer.StatusCode, envelope)
+	}
+
 	cancel()
 	select {
 	case err := <-finished:
@@ -95,6 +115,7 @@ func TestRunServesHealthOnSocketAndStopsOnCancel(t *testing.T) {
 }
 
 func TestRunRefusesSocketOfLiveDaemon(t *testing.T) {
+	t.Setenv("MAESTRO_DATA_HOME", shortDir(t))
 	socket := filepath.Join(shortDir(t), "svc.sock")
 	live, err := transport.Listen(socket)
 	if err != nil {
