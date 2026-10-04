@@ -17,6 +17,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/ipc/` | The daemon's versioned JSON API: envelope, bounded bodies, persisted idempotency keys. |
 | `internal/scheduler/` | Global capacity: atomic slot reservations for sessions, test runs and commands. |
 | `internal/launcher/` | Execution confinement: Bubblewrap namespaces, inherited limits, supervised groups. |
+| `internal/session/` | Persistent PTY sessions: bounded output, resize, stop, exit reconciliation. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -26,7 +27,8 @@ component owns it, and how the pieces depend on each other.
 | `Makefile` | Entry points for every local check and build. |
 
 Go dependencies are pinned by `go.mod` and kept minimal: the standard
-library plus `modernc.org/sqlite` (SQLite without CGO).
+library plus `modernc.org/sqlite` (SQLite without CGO) and
+`github.com/creack/pty` (PTY allocation).
 
 ## Components
 
@@ -119,6 +121,17 @@ so stopping the leader (SIGTERM, then SIGKILL after the grace period)
 lets the kernel tear the whole namespace down: descendant termination
 is a kernel guarantee, not a best effort. The launcher tests skip on a
 host that cannot confine; CI installs the tooling to run them.
+
+## PTY sessions
+
+Each agent process runs on a real terminal the daemon owns, inside the
+confinement above. A session keeps only the last bytes of output in a
+bounded ring (1 MiB by default) while counting everything it ever saw,
+propagates terminal resizes to the PTY, and reconciles its state when
+the process exits on its own — phase, exit code, output totals. An
+explicit stop signals the group and returns only once the leader is
+reaped, which tears the group's PID namespace down; writes and resizes
+on a finished session are refused, and stopping it again is a no-op.
 
 ## Durable store
 
