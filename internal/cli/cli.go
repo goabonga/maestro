@@ -44,6 +44,8 @@ func Run(ctx context.Context, args []string, output io.Writer, version string) e
 		return initProject(flags.Args()[1:], output)
 	case "status":
 		return status(ctx, flags.Args()[1:], output)
+	case "attach":
+		return attachCommand(ctx, flags.Args()[1:], output)
 	case "backup":
 		return backup(flags.Args()[1:], output)
 	case "daemon":
