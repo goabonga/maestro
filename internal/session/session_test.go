@@ -171,3 +171,51 @@ func TestRingKeepsOnlyTheNewestBytes(t *testing.T) {
 		t.Fatalf("kept=%q total=%d", kept, total)
 	}
 }
+
+func TestSubscribersReceiveLiveOutputAndCloseOnExit(t *testing.T) {
+	session := start(t, Config{Spec: launcher.Spec{Argv: []string{"/bin/sh", "-c", "echo streamed; sleep 0.2"}, Dir: t.TempDir()}})
+	live, cancel := session.Subscribe(16)
+	defer cancel()
+	var collected bytes.Buffer
+	for chunk := range live {
+		collected.Write(chunk)
+	}
+	// The channel closed because the session ended; everything the
+	// subscriber saw arrived live.
+	if !strings.Contains(collected.String(), "streamed") {
+		t.Fatalf("live output %q", collected.String())
+	}
+	if late, _ := session.Subscribe(4); late == nil {
+		t.Fatal("nil channel")
+	} else if _, open := <-late; open {
+		t.Fatal("a subscription on a finished session stayed open")
+	}
+}
+
+func TestSlowSubscriberIsDisconnectedNotBlocking(t *testing.T) {
+	session := start(t, Config{
+		Spec: launcher.Spec{Argv: []string{"/bin/sh", "-c", "seq 1 20000; echo DONE; sleep 5"}, Dir: t.TempDir()},
+	})
+	slow, cancel := session.Subscribe(1)
+	defer cancel()
+	// Never read from slow: its queue overflows and the session must
+	// disconnect it while the master keeps being drained.
+	deadline := time.Now().Add(10 * time.Second)
+	closed := false
+	for time.Now().Before(deadline) && !closed {
+		select {
+		case _, open := <-slow:
+			if !open {
+				closed = true
+			}
+			// Swallow at most the buffered chunk, then stop reading.
+			time.Sleep(200 * time.Millisecond)
+		default:
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if !closed {
+		t.Fatal("the slow subscriber was never disconnected")
+	}
+	waitOutput(t, session, "DONE")
+}
