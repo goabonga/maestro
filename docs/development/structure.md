@@ -18,6 +18,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/scheduler/` | Global capacity: atomic slot reservations for sessions, test runs and commands. |
 | `internal/launcher/` | Execution confinement: Bubblewrap namespaces, inherited limits, supervised groups. |
 | `internal/session/` | Persistent PTY sessions: bounded output, resize, stop, exit reconciliation. |
+| `internal/fixture/` | PTY fixtures: record a session, strip secrets, replay it with expected outcomes. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -158,6 +159,22 @@ leaves on `Ctrl-]` with a detach frame. The previous terminal settings
 are restored by a deferred call on every exit path — detach, session
 end, connection error. The daemon does not create sessions yet; the
 command is exercised against fixture sessions in the tests.
+
+## PTY fixtures
+
+Driver behavior is tested against recorded sessions, never against the
+real agent CLIs. `internal/fixture` records a live session — output
+from a subscription, input and resizes sent through the recorder, the
+final exit — as JSON Lines: a header (agent, version, case, terminal
+size, expected driver states at given offsets) and one timed event per
+line. Recordings stay local until sanitized: the sanitizer coalesces
+output bursts so no secret straddles two chunks, strips exact secret
+values, maps host paths to placeholders and replaces known secret
+shapes (API keys, bearer and GitHub tokens, AWS key ids, e-mail
+addresses). Saving refuses a fixture that is not marked sanitized or in
+which a secret shape is still detectable across event boundaries.
+Replay feeds a fixture to a sink on the recorded clock, instantly or in
+scaled real time, so a detector can measure idle periods as recorded.
 
 ## Durable store
 
