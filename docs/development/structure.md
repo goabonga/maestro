@@ -20,6 +20,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/session/` | Persistent PTY sessions: bounded output, resize, stop, exit reconciliation. |
 | `internal/fixture/` | PTY fixtures: record a session, strip secrets, replay it with expected outcomes. |
 | `internal/agent/` | Versioned driver registry and the host doctor: which agent versions may be driven. |
+| `internal/handoff/` | Handoff contracts: the versioned envelope, typed payloads, and their checks against the assignment and Git. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -179,6 +180,23 @@ scaled real time, so a detector can measure idle periods as recorded.
 Real sessions recorded with util-linux `script` are imported with
 `ImportScript`; the resulting fixtures and verdicts are listed in the
 [driver validation matrix](validation.md).
+
+## Handoff contracts
+
+Agents never hand results over through terminal text. Every result is a
+JSON document: a common envelope (`schema_version`, artifact, kind,
+task, turn, attempt, worker and configuration identifiers, input
+artifacts, and for code roles the task base and source head) around a
+payload typed by its kind — `PLAN`, `IMPLEMENTATION`, `REVIEW`,
+`TEST_REPORT`, `FIX_REQUEST`, `CONFLICT_RESOLUTION`. Decoding is
+strict: unknown fields, trailing data, an unsupported schema version,
+malformed identifiers or object ids are refused, and each payload is
+checked against its kind (plan sections in order, review verdict and
+issues, commit ids). The envelope must then repeat exactly the
+assignment it answers — a document from another task, turn, attempt,
+worker or configuration never satisfies a turn — and an implementation's
+commit list must be exactly Git's first-parent chain from the task base
+to the source head.
 
 ## Durable store
 
