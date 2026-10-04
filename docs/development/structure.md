@@ -16,6 +16,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/state/` | Durable store: the SQLite database, its ordered migrations, the advisory file locks, backup/restore and GC. |
 | `internal/ipc/` | The daemon's versioned JSON API: envelope, bounded bodies, persisted idempotency keys. |
 | `internal/scheduler/` | Global capacity: atomic slot reservations for sessions, test runs and commands. |
+| `internal/launcher/` | Execution confinement: Bubblewrap namespaces, inherited limits, supervised groups. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -101,6 +102,23 @@ a clean worktree, verified through `git rev-parse` rather than a
 reconstructed path. A dirty worktree is never force-deleted: abandoning
 one moves it under `quarantine/` with a record of its branch and original
 path, still registered with its worker repository.
+
+## Execution confinement
+
+Agent, test and command processes never run bare. `internal/launcher`
+probes the host once — Bubblewrap and `prlimit` must exist and a canary
+must run inside the full namespace set — and refuses to start anything
+when the host cannot confine; there is no permissive fallback. Each
+group runs under user, mount, PID, IPC, UTS and (by default) network
+namespaces: a read-only system, a namespace-local `/proc`, a private
+`/dev` and `/tmp`, only the explicitly bound paths visible, a cleared
+environment refilled from an allow-list, and CPU, address-space and
+process limits set inside the user namespace so every descendant
+inherits them. The group's processes live in their own PID namespace,
+so stopping the leader (SIGTERM, then SIGKILL after the grace period)
+lets the kernel tear the whole namespace down: descendant termination
+is a kernel guarantee, not a best effort. The launcher tests skip on a
+host that cannot confine; CI installs the tooling to run them.
 
 ## Durable store
 
