@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/worktree"
 )
@@ -215,5 +216,42 @@ func TestStopRouteTriggersShutdown(t *testing.T) {
 	case <-stopped:
 	default:
 		t.Fatal("shutdown was not triggered")
+	}
+}
+
+func TestStatusRouteExposesCapacity(t *testing.T) {
+	server, web := newServer(t)
+	status, envelope, raw := call(t, web, "GET", "/v1/status", nil, "")
+	if status != http.StatusOK || bytes.Contains(raw, []byte("capacity")) {
+		t.Fatalf("status=%d envelope=%+v", status, envelope)
+	}
+
+	capacity, err := scheduler.NewCapacity(3, 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capacity.Reserve(scheduler.Sessions, "p1"); err != nil {
+		t.Fatal(err)
+	}
+	server.Capacity = capacity
+	status, _, raw = call(t, web, "GET", "/v1/status", nil, "")
+	if status != http.StatusOK {
+		t.Fatalf("status=%d", status)
+	}
+	var body struct {
+		Data struct {
+			Capacity map[string]struct {
+				Used      int            `json:"used"`
+				Limit     int            `json:"limit"`
+				ByProject map[string]int `json:"by_project"`
+			} `json:"capacity"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	sessions := body.Data.Capacity["sessions"]
+	if sessions.Used != 1 || sessions.Limit != 3 || sessions.ByProject["p1"] != 1 {
+		t.Fatalf("capacity %+v", body.Data.Capacity)
 	}
 }
