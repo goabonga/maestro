@@ -133,6 +133,22 @@ explicit stop signals the group and returns only once the leader is
 reaped, which tears the group's PID namespace down; writes and resizes
 on a finished session are refused, and stopping it again is a no-op.
 
+Live output reaches clients through bounded subscriptions: the PTY
+master is always drained into the ring first, and a subscriber whose
+queue overflows is disconnected rather than allowed to block the read.
+Subscribers learn that a session ended only once its exit is
+reconciled.
+
+Clients stream a session over a dedicated connection, never mixed with
+RPC responses: `GET /v1/sessions/{id}/stream` with
+`Upgrade: maestro-stream/1` switches the connection to typed frames —
+a one-byte type (`o` output, `i` input, `r` resize, `d` detach,
+`e` error), a big-endian 32-bit length and a payload bounded to
+64 KiB; unknown types and oversized lengths are refused. Every frame
+write has a deadline: a client that stops reading is hung up on, and
+the session keeps running. A detach frame ends the stream only; the
+session survives it.
+
 ## Durable store
 
 All durable state lives in one SQLite database opened with WAL
