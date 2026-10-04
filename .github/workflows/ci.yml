@@ -142,6 +142,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Install the sandbox tooling used by the launcher tests
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap
       - name: Check changed executables and imported internal packages
         env:
           GO_COMPONENTS: ${{ needs.components.outputs.go }}
