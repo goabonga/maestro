@@ -148,11 +148,16 @@ func TestDetachEndsTheStreamNotTheSession(t *testing.T) {
 	if err := WriteFrame(connection, FrameDetach, nil); err != nil {
 		t.Fatal(err)
 	}
+	// A detach ends the stream cleanly: no error frame, then EOF.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		_ = connection.SetReadDeadline(time.Now().Add(5 * time.Second))
-		if _, _, err := ReadFrame(connection); err != nil {
+		kind, payload, err := ReadFrame(connection)
+		if err != nil {
 			break
+		}
+		if kind == FrameError {
+			t.Fatalf("a detach produced an error frame: %s", payload)
 		}
 	}
 	if state := live.State(); state.Phase != session.Running {
