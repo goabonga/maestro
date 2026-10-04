@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/goabonga/maestro/internal/ipc"
+	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/transport"
 	"github.com/goabonga/maestro/internal/worktree"
@@ -36,6 +37,9 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("maestro-svc", flag.ContinueOnError)
 	flags.SetOutput(output)
 	socket := flags.String("socket", transport.DefaultSocket(), "Unix socket path")
+	maxSessions := flags.Int("max-sessions", scheduler.DefaultSessions, "global ceiling of concurrent sessions")
+	maxTests := flags.Int("max-test-jobs", scheduler.DefaultTests, "global ceiling of concurrent test runs")
+	maxCommands := flags.Int("max-command-jobs", scheduler.DefaultCommands, "global ceiling of concurrent commands")
 	showVersion := flags.Bool("version", false, "print version")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -51,6 +55,12 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		return err
 	}
 
+	// The ceilings come from the daemon's own configuration, never
+	// from a project's versioned file; they are validated at startup.
+	capacity, err := scheduler.NewCapacity(*maxSessions, *maxTests, *maxCommands)
+	if err != nil {
+		return err
+	}
 	store, err := worktree.DefaultStore()
 	if err != nil {
 		return err
@@ -88,6 +98,6 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
-	server := &ipc.Server{DB: db, Store: store, Service: "maestro-svc", Version: Version, Shutdown: stop}
+	server := &ipc.Server{DB: db, Store: store, Service: "maestro-svc", Version: Version, Shutdown: stop, Capacity: capacity}
 	return transport.Serve(ctx, listener, server.Handler())
 }

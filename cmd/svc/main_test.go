@@ -203,3 +203,11 @@ func TestRunStopsOnTheStopRoute(t *testing.T) {
 		t.Fatalf("socket left behind: %v", err)
 	}
 }
+
+func TestRunValidatesCapacityCeilings(t *testing.T) {
+	var output bytes.Buffer
+	err := run(context.Background(), []string{"--max-sessions", "0"}, &output)
+	if err == nil || !strings.Contains(err.Error(), "at least 1") {
+		t.Fatalf("error %v", err)
+	}
+}
