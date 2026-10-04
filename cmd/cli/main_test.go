@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goabonga/maestro/internal/ipc"
 	"github.com/goabonga/maestro/internal/transport"
 )
 
@@ -67,13 +68,14 @@ func TestStatusReadsDaemonHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	go func() { _ = http.Serve(listener, transport.Health("maestro-svc", Version)) }()
+	server := &ipc.Server{Service: "maestro-svc", Version: Version}
+	go func() { _ = http.Serve(listener, server.Handler()) }()
 
 	var output bytes.Buffer
 	if err := run(context.Background(), []string{"status", "--socket", socket}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), `"service":"maestro-svc"`) || !strings.Contains(output.String(), `"status":"ok"`) {
+	if !strings.Contains(output.String(), "daemon: maestro-svc "+Version) {
 		t.Fatalf("output %q", output.String())
 	}
 }

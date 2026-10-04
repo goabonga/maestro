@@ -6,11 +6,15 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strings"
+	"text/tabwriter"
 
 	"github.com/goabonga/maestro/internal/transport"
 	"github.com/goabonga/maestro/internal/worktree"
@@ -102,7 +106,7 @@ func status(ctx context.Context, args []string, output io.Writer) error {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected argument: %s", flags.Arg(0))
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://maestro/healthz", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://maestro/v1/status", nil)
 	if err != nil {
 		return err
 	}
@@ -114,6 +118,39 @@ func status(ctx context.Context, args []string, output io.Writer) error {
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("daemon returned %s", response.Status)
 	}
-	_, err = io.Copy(output, io.LimitReader(response.Body, 1<<16))
-	return err
+	var envelope struct {
+		Data struct {
+			Service  string `json:"service"`
+			Version  string `json:"version"`
+			Capacity map[string]struct {
+				Used      int            `json:"used"`
+				Limit     int            `json:"limit"`
+				ByProject map[string]int `json:"by_project"`
+			} `json:"capacity"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<16)).Decode(&envelope); err != nil {
+		return err
+	}
+	fmt.Fprintf(output, "daemon: %s %s\n", envelope.Data.Service, envelope.Data.Version)
+	if len(envelope.Data.Capacity) == 0 {
+		return nil
+	}
+	table := tabwriter.NewWriter(output, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(table, "CAPACITY\tUSED\tLIMIT\tBY PROJECT")
+	kinds := make([]string, 0, len(envelope.Data.Capacity))
+	for kind := range envelope.Data.Capacity {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	for _, kind := range kinds {
+		usage := envelope.Data.Capacity[kind]
+		projects := make([]string, 0, len(usage.ByProject))
+		for project, count := range usage.ByProject {
+			projects = append(projects, fmt.Sprintf("%s: %d", project, count))
+		}
+		sort.Strings(projects)
+		fmt.Fprintf(table, "%s\t%d\t%d\t%s\n", kind, usage.Used, usage.Limit, strings.Join(projects, ", "))
+	}
+	return table.Flush()
 }
