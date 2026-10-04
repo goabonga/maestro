@@ -9,11 +9,12 @@ component owns it, and how the pieces depend on each other.
 | Path | Contents |
 | --- | --- |
 | `cmd/cli/` | Entry point of the `maestro` command. Only wires flags, signals and `internal/cli`. |
-| `cmd/svc/` | Entry point of the `maestro-svc` daemon. Registers its handler with `internal/transport`. |
+| `cmd/svc/` | Entry point of the `maestro-svc` daemon: flags, user lock, store migration, socket serving. |
 | `internal/cli/` | Command logic: `--version`, help and the `init`, `status`, `project`, `worktree list` and `diff` subcommands. |
 | `internal/transport/` | Unix socket listener and client, HTTP serving with graceful shutdown, `/healthz`. |
 | `internal/worktree/` | Project store: the data directory, the canonical repository import and the private per-worker clones. |
 | `internal/state/` | Durable store: the SQLite database, its ordered migrations and the advisory file locks. |
+| `internal/ipc/` | The daemon's versioned JSON API: envelope, bounded bodies, persisted idempotency keys. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -54,6 +55,19 @@ The daemon and the CLI talk over a Unix socket, `$XDG_RUNTIME_DIR/maestro/svc.so
 or a per-user path under the temporary directory when `XDG_RUNTIME_DIR` is unset.
 The socket directory is `0700` and the socket is `0600`, so only the owning user can
 connect. Pass `--socket` to either command to use another path.
+
+Beside `GET /healthz`, the daemon serves a versioned JSON API under
+`/v1/`. Every response carries a stable envelope: `request_id` (echoed
+from the `X-Request-Id` header or generated), then `data` or `error`
+with a stable `code`. Request bodies are bounded (1 MiB). Mutations
+require an `Idempotency-Key` header, persisted in SQLite with a hash of
+the request and the stored response: a retry with the same key and body
+replays the stored response without re-running the handler, the same
+key with a different body is a conflict, and a claim whose response was
+never stored reports in progress. Current routes: `GET /v1/projects`
+(list) and `POST /v1/projects` (register a repository, as `maestro
+init` does). On start the daemon migrates the store under the user
+lock before binding the socket.
 
 Project data lives in the [data directory](../initialization.md#data-directory),
 one directory per registered project:
