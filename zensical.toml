@@ -11,6 +11,7 @@ repo_name = "goabonga/maestro"
 nav = [
     { "Introduction" = "index.md" },
     { "Project initialization" = "initialization.md" },
+    { "Inspecting worktrees" = "worktrees.md" },
     { "Development" = [{ "Project structure" = "development/structure.md" }, { "GitHub automation" = "development/github.md" }] },
     { "Versions" = "versions.md" },
 ]
