@@ -25,6 +25,9 @@ type Server struct {
 
 	// Capacity exposes the global ceilings; nil hides them in status.
 	Capacity *scheduler.Capacity
+
+	// Sessions resolves streamable sessions; nil disables streaming.
+	Sessions SessionSource
 }
 
 // projectView is the JSON shape of a project.
@@ -46,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects", idempotent(s.DB, s.registerProject))
 	mux.HandleFunc("POST /v1/daemon/stop", s.stopDaemon)
 	mux.HandleFunc("GET /v1/status", s.status)
+	mux.HandleFunc("GET /v1/sessions/{id}/stream", s.streamSession)
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusNotFound, CodeNotFound, "unknown route: "+r.URL.Path)
 	})
