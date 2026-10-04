@@ -149,6 +149,14 @@ func (l *Launcher) arguments(spec Spec) ([]string, error) {
 	return args, nil
 }
 
+// Command builds the exec.Cmd of a confined group, for callers that
+// attach their own terminal or pipes before starting it. The returned
+// command is fully confined; its environment lives inside the sandbox
+// specification, never in the process environment.
+func (l *Launcher) Command(spec Spec) (*exec.Cmd, error) {
+	return l.command(spec)
+}
+
 // command builds the exec.Cmd of a confined group.
 func (l *Launcher) command(spec Spec) (*exec.Cmd, error) {
 	args, err := l.arguments(spec)
