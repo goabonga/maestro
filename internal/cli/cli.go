@@ -13,6 +13,7 @@ import (
 	"net/http"
 
 	"github.com/goabonga/maestro/internal/transport"
+	"github.com/goabonga/maestro/internal/worktree"
 )
 
 // Run parses the public CLI flags, runs a subcommand, or writes its version or help.
@@ -35,11 +36,48 @@ func Run(ctx context.Context, args []string, output io.Writer, version string) e
 		return nil
 	}
 	switch flags.Arg(0) {
+	case "init":
+		return initProject(flags.Args()[1:], output)
 	case "status":
 		return status(ctx, flags.Args()[1:], output)
 	default:
 		return fmt.Errorf("unknown command: %s", flags.Arg(0))
 	}
+}
+
+// initProject registers the repository containing the given path (the
+// working directory by default) and imports it into Maestro's data
+// directory. Running it again on the same repository is harmless.
+func initProject(args []string, output io.Writer) error {
+	flags := flag.NewFlagSet("maestro init", flag.ContinueOnError)
+	flags.SetOutput(output)
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if flags.NArg() > 1 {
+		return fmt.Errorf("unexpected argument: %s", flags.Arg(1))
+	}
+	path := "."
+	if flags.NArg() == 1 {
+		path = flags.Arg(0)
+	}
+	store, err := worktree.DefaultStore()
+	if err != nil {
+		return err
+	}
+	project, created, err := store.Init(path)
+	if err != nil {
+		return err
+	}
+	if !created {
+		_, err = fmt.Fprintf(output, "project already registered: %s\n", project.ID)
+		return err
+	}
+	_, err = fmt.Fprintf(output, "project registered: %s\n", project.ID)
+	return err
 }
 
 // status asks the running daemon for its health over its Unix socket.
