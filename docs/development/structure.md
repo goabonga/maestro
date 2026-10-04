@@ -10,7 +10,7 @@ component owns it, and how the pieces depend on each other.
 | --- | --- |
 | `cmd/cli/` | Entry point of the `maestro` command. Only wires flags, signals and `internal/cli`. |
 | `cmd/svc/` | Entry point of the `maestro-svc` daemon: flags, user lock, store migration, socket serving. |
-| `internal/cli/` | Command logic: `--version`, help and the `init`, `status`, `daemon`, `project`, `worktree list`, `diff`, `attach`, `backup`, `restore` and `gc` subcommands. |
+| `internal/cli/` | Command logic: `--version`, help and the `init`, `status`, `daemon`, `project`, `worktree list`, `diff`, `attach`, `agent doctor`, `backup`, `restore` and `gc` subcommands. |
 | `internal/transport/` | Unix socket listener and client, HTTP serving with graceful shutdown, `/healthz`. |
 | `internal/worktree/` | Project store: the data directory, the canonical repository import and the private per-worker clones. |
 | `internal/state/` | Durable store: the SQLite database, its ordered migrations, the advisory file locks, backup/restore and GC. |
@@ -19,6 +19,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/launcher/` | Execution confinement: Bubblewrap namespaces, inherited limits, supervised groups. |
 | `internal/session/` | Persistent PTY sessions: bounded output, resize, stop, exit reconciliation. |
 | `internal/fixture/` | PTY fixtures: record a session, strip secrets, replay it with expected outcomes. |
+| `internal/agent/` | Versioned driver registry and the host doctor: which agent versions may be driven. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |

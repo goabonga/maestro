@@ -14,6 +14,7 @@ nav = [
     { "Inspecting worktrees" = "worktrees.md" },
     { "Running the daemon" = "daemon.md" },
     { "Backup, restore and cleanup" = "maintenance.md" },
+    { "Checking agents" = "agents.md" },
     { "Development" = [{ "Project structure" = "development/structure.md" }, { "GitHub automation" = "development/github.md" }, { "Driver validation" = "development/validation.md" }] },
     { "Versions" = "versions.md" },
 ]
