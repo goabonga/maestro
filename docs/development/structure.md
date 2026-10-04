@@ -15,6 +15,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/worktree/` | Project store: the data directory, the canonical repository import and the private per-worker clones. |
 | `internal/state/` | Durable store: the SQLite database, its ordered migrations and the advisory file locks. |
 | `internal/ipc/` | The daemon's versioned JSON API: envelope, bounded bodies, persisted idempotency keys. |
+| `internal/scheduler/` | Global capacity: atomic slot reservations for sessions, test runs and commands. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -122,8 +123,9 @@ go run ./cmd/cli --version
 go run ./cmd/cli status
 ```
 
-`maestro status` prints the daemon's `/healthz` response. It reports liveness only,
-not whether dependencies are ready. The daemon removes a stale socket left by a
+`maestro status` asks `GET /v1/status` and prints the daemon identity with the
+global capacity: consumption, ceilings and the per-project detail. It reports
+liveness, not whether dependencies are ready. The daemon removes a stale socket left by a
 crash, refuses to start if another daemon is listening, and removes its socket on
 SIGINT or SIGTERM after draining requests.
 

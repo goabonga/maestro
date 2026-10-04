@@ -30,6 +30,25 @@ crashed daemon never blocks a restart, and a stale socket file left by
 a crash is detected by a failed connection and cleaned up under the
 user lock at the next start.
 
+## Capacity
+
+The daemon bounds concurrent work machine-wide: `--max-sessions`
+(default 3), `--max-test-jobs` (default 1) and `--max-command-jobs`
+(default 3). The ceilings belong to the daemon's own configuration —
+never to a project's versioned file — are validated at startup, and are
+reserved atomically across projects, so they cannot be overallocated.
+`maestro status` shows each ceiling, its consumption and the
+per-project detail:
+
+```console
+$ maestro status
+daemon: maestro-svc 0.1.0
+CAPACITY  USED  LIMIT  BY PROJECT
+commands  0     3
+sessions  1     3      6b1f6d3a-…: 1
+tests     0     1
+```
+
 All commands accept `--socket`; the default lives under
 `$XDG_RUNTIME_DIR/maestro/svc.sock`, or a per-user directory in the
 system temporary directory when `XDG_RUNTIME_DIR` is unset.
