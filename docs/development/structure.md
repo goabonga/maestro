@@ -175,6 +175,9 @@ addresses). Saving refuses a fixture that is not marked sanitized or in
 which a secret shape is still detectable across event boundaries.
 Replay feeds a fixture to a sink on the recorded clock, instantly or in
 scaled real time, so a detector can measure idle periods as recorded.
+Real sessions recorded with util-linux `script` are imported with
+`ImportScript`; the resulting fixtures and verdicts are listed in the
+[driver validation matrix](validation.md).
 
 ## Durable store
 
