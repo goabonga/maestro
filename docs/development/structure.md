@@ -10,8 +10,9 @@ component owns it, and how the pieces depend on each other.
 | --- | --- |
 | `cmd/cli/` | Entry point of the `maestro` command. Only wires flags, signals and `internal/cli`. |
 | `cmd/svc/` | Entry point of the `maestro-svc` daemon. Registers its handler with `internal/transport`. |
-| `internal/cli/` | Command logic: `--version`, help and the `status` subcommand. |
+| `internal/cli/` | Command logic: `--version`, help and the `init` and `status` subcommands. |
 | `internal/transport/` | Unix socket listener and client, HTTP serving with graceful shutdown, `/healthz`. |
+| `internal/worktree/` | Project store: the data directory, the canonical repository import and the private per-worker clones. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -52,6 +53,24 @@ or a per-user path under the temporary directory when `XDG_RUNTIME_DIR` is unset
 The socket directory is `0700` and the socket is `0600`, so only the owning user can
 connect. Pass `--socket` to either command to use another path.
 
+Project data lives in the [data directory](../initialization.md#data-directory),
+one directory per registered project:
+
+```
+<data>/projects/<project-id>/
+    project.json                    project metadata
+    repository.git/                 private canonical repository
+    worker-repositories/
+        <worker>.git/               private clone of one worker
+```
+
+Every repository under a project is a bare clone with fully copied
+objects: no hardlinks and no alternates, so no repository can write into
+another one through Git metadata. A worker repository keeps no remote;
+the daemon moves commits explicitly — it provisions a worker branch from
+the canonical integration head and imports a worker branch back under
+`refs/maestro/workers/<worker>/`, never the other way around.
+
 ## Local development
 
 ```console
@@ -80,5 +99,6 @@ SIGINT or SIGTERM after draining requests.
 | `make icons` | Regenerates the documentation logo and favicon |
 
 Python tests use pytest functions and fixtures. Go tests cover HTTP routing, the
-socket lifecycle, `maestro status` and graceful shutdown. See
+socket lifecycle, `maestro status`, graceful shutdown, and the project store
+against temporary Git repositories. See
 [GitHub automation](github.md) for change detection, signing and releases.
