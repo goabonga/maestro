@@ -123,13 +123,14 @@ func (l *Launcher) arguments(spec Spec) ([]string, error) {
 		}
 	}
 	args = append(args, "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp")
-	for _, path := range spec.ReadOnly {
-		args = append(args, "--ro-bind", path, path)
-	}
 	if spec.DirReadOnly {
 		args = append(args, "--ro-bind", spec.Dir, spec.Dir)
 	} else {
 		args = append(args, "--bind", spec.Dir, spec.Dir)
+	}
+	// Protected subpaths must overlay the workdir bind, never the reverse.
+	for _, path := range spec.ReadOnly {
+		args = append(args, "--ro-bind", path, path)
 	}
 	for _, path := range spec.Writable {
 		args = append(args, "--bind", path, path)
@@ -161,6 +162,18 @@ func (l *Launcher) arguments(spec Spec) ([]string, error) {
 // command is fully confined; its environment lives inside the sandbox
 // specification, never in the process environment.
 func (l *Launcher) Command(spec Spec) (*exec.Cmd, error) {
+	return l.command(spec)
+}
+
+// CommandReady acknowledges mount setup through a private FIFO before exec of
+// the application. The fixed wrapper is Maestro code, never model-provided
+// shell text. The caller creates and owns the FIFO and must wait for its byte.
+func (l *Launcher) CommandReady(spec Spec, readyPath string) (*exec.Cmd, error) {
+	if len(spec.Argv) == 0 || readyPath == "" {
+		return nil, errors.New("command and readiness FIFO are required")
+	}
+	spec.Writable = append(append([]string(nil), spec.Writable...), readyPath)
+	spec.Argv = append([]string{"/bin/sh", "-c", `printf R > "$1" || exit 125; shift; exec "$@"`, "maestro-profile-ready", readyPath}, spec.Argv...)
 	return l.command(spec)
 }
 
