@@ -337,3 +337,70 @@ func TestListReturnsTheTasksOfOneProjectOldestFirst(t *testing.T) {
 		t.Fatalf("tasks=%+v err=%v", tasks, err)
 	}
 }
+
+func TestTransitionTxCommitsAndRollsBackWithTheCaller(t *testing.T) {
+	store, _, configID := fixture(t)
+	id := create(t, store, configID).ID
+	assign := Input{Event: Assign, Guard: Guard{AssignmentAvailable: true}}
+
+	tx, err := store.DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next, err := store.TransitionTx(tx, id, assign); err != nil || next.State != Planning {
+		t.Fatalf("next=%+v err=%v", next, err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := store.Get(id); err != nil || stored.State != New || stored.Version != 1 {
+		t.Fatalf("rolled back: stored=%+v err=%v", stored, err)
+	}
+	if events, err := store.Events(id); err != nil || len(events) != 1 {
+		t.Fatalf("rolled back: events=%+v err=%v", events, err)
+	}
+
+	tx, err = store.DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.TransitionTx(tx, id, assign); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.Get(id)
+	if err != nil || stored.State != Planning || stored.Version != 2 {
+		t.Fatalf("committed: stored=%+v err=%v", stored, err)
+	}
+	if events, err := store.Events(id); err != nil || len(events) != 2 || events[1].Event != Assign || events[1].To != Planning {
+		t.Fatalf("committed: events=%+v err=%v", events, err)
+	}
+}
+
+func TestTransitionTxWritesNothingOnFailure(t *testing.T) {
+	store, _, configID := fixture(t)
+	id := create(t, store, configID).ID
+	step(t, store, id, toReview(sha('a'))...)
+	tx, err := store.DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := store.TransitionTx(tx, id, Input{Event: Approve, Revision: sha('b'), Guard: Guard{AllReviewsApproved: true}}); !errors.Is(err, ErrStale) {
+		t.Fatalf("stale: err=%v", err)
+	}
+	if _, err := store.TransitionTx(tx, id, Input{Event: Assign}); !errors.Is(err, ErrTransition) {
+		t.Fatalf("refused: err=%v", err)
+	}
+	if _, err := store.TransitionTx(tx, "missing", Input{Event: Assign}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing: err=%v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if events, err := store.Events(id); err != nil || len(events) != 5 {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+}
