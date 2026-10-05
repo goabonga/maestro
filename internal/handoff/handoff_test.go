@@ -72,6 +72,23 @@ func TestDecodeAcceptsEveryKind(t *testing.T) {
 	}
 }
 
+func TestDecodeReadsTestRunDetails(t *testing.T) {
+	report := TestReportPayload{
+		TestedSHA: sha2, Argv: []string{"make", "test"}, ExitCode: 2, Log: "FAIL\n",
+		Name: "unit", DurationMS: 1500, TimedOut: true, LogTruncated: true,
+		ChangedPaths: []string{"go.sum"}, UntrackedPaths: []string{"bin/app"},
+	}
+	_, decoded, err := Decode(document(t, TestReport, report, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decoded.(TestReportPayload)
+	if got.Name != "unit" || got.DurationMS != 1500 || !got.TimedOut || !got.LogTruncated ||
+		strings.Join(got.ChangedPaths, ",") != "go.sum" || strings.Join(got.UntrackedPaths, ",") != "bin/app" {
+		t.Fatalf("decoded %+v", got)
+	}
+}
+
 func TestDecodeRefusesContractViolations(t *testing.T) {
 	plan := PlanPayload{Body: planBody}
 	cases := map[string][]byte{
@@ -93,6 +110,8 @@ func TestDecodeRefusesContractViolations(t *testing.T) {
 			Issues: []ReviewIssue{{ID: "i1", Description: "d", Severity: "urgent"}}}, nil),
 		"diff digest":    document(t, Review, ReviewPayload{Verdict: "approve", ReviewedSHA: sha2, DiffDigest: "abc"}, nil),
 		"test argv":      document(t, TestReport, TestReportPayload{TestedSHA: sha2}, nil),
+		"test name":      document(t, TestReport, TestReportPayload{TestedSHA: sha2, Argv: []string{"make"}, Name: "../unit"}, nil),
+		"test duration":  document(t, TestReport, TestReportPayload{TestedSHA: sha2, Argv: []string{"make"}, DurationMS: -1}, nil),
 		"fix references": document(t, FixRequest, FixRequestPayload{Revision: sha2}, nil),
 		"resolution sha": document(t, ConflictResolution, ConflictResolutionPayload{OperationID: "op-1", IntegrationBaseSHA: sha1, SourceSHA: sha2, ResolutionSHA: "nope"}, nil),
 		"trailing data":  append(document(t, Plan, plan, nil), []byte(` {}`)...),
