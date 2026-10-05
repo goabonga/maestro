@@ -67,7 +67,7 @@ jobs:
     name: detect changed components
     # Pull requests stop here when a commit is not signed; pushes skip the
     # signature job and still detect.
-    needs: [plumber, signatures]
+    needs: signatures
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     outputs:
