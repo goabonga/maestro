@@ -34,6 +34,9 @@ modified behind your back.
   configuration and instruction files it was created with, starts from
   the project's integration head on its own branch, and moves only
   through the transitions Maestro allows. [Managing tasks](docs/tasks.md)
+- **Shows its workers** (`maestro worker list|show`): each worker of a
+  project with its agent, driver, state, current assignment and recent
+  events. [Command reference](docs/cli.md#workers)
 - **Shows a live dashboard** (`maestro tui`) of the daemon's status and
   capacity, the projects and their tasks with their history.
   [Terminal dashboard](docs/tui.md)
