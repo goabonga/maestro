@@ -149,3 +149,38 @@ func TestBudgetTablesKeyReservationsAndOpenIntervals(t *testing.T) {
 		t.Fatal("a negative active time was accepted")
 	}
 }
+
+func TestTasksCarryTheirProjectAndDescription(t *testing.T) {
+	db := openDB(t)
+	if err := db.Migrate(Migrations[:5]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO config_snapshots (config_id, created_at, document) VALUES ('sha256-x', 'now', '{}')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO tasks (task_id, config_id, task_base_sha, branch, state, version, max_fix_cycles, created_at, updated_at) VALUES ('t1', 'sha256-x', 'b', 'maestro/task-t1', 'NEW', 1, 3, 'now', 'now')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(Migrations); err != nil {
+		t.Fatal(err)
+	}
+	// A task stored before the migration keeps empty values.
+	var project, description string
+	if err := db.QueryRow("SELECT project_id, description FROM tasks WHERE task_id = 't1'").Scan(&project, &description); err != nil {
+		t.Fatal(err)
+	}
+	if project != "" || description != "" {
+		t.Fatalf("project=%q description=%q", project, description)
+	}
+	if _, err := db.Exec("INSERT INTO tasks (task_id, project_id, description, config_id, task_base_sha, branch, state, version, max_fix_cycles, created_at, updated_at) VALUES ('t2', 'p1', 'add a flag', 'sha256-x', 'b', 'maestro/task-t2', 'NEW', 1, 3, 'now', 'now')"); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM tasks WHERE project_id = 'p1' AND description = 'add a flag'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("count=%d err=%v", count, err)
+	}
+	var index string
+	if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'tasks_by_project'").Scan(&index); err != nil {
+		t.Fatal(err)
+	}
+}
