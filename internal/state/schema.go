@@ -122,4 +122,47 @@ var Migrations = []Migration{
 		CHECK (old_config_id <> new_config_id)
 	);
 	CREATE INDEX task_config_updates_by_task ON task_config_updates (task_id, event_id)`},
+	{Version: 9, SQL: `CREATE TABLE operations (
+		id TEXT PRIMARY KEY,
+		type TEXT NOT NULL CHECK (type IN ('INTEGRATE', 'SYNC', 'PUBLISH')),
+		state TEXT NOT NULL CHECK (state IN
+			('PREPARED', 'STARTED', 'APPLIED', 'TESTED', 'COMMITTED', 'FAILED', 'ROLLED_BACK')),
+		version INTEGER NOT NULL CHECK (version >= 1),
+		project_id TEXT NOT NULL CHECK (project_id <> ''),
+		config_id TEXT NOT NULL REFERENCES config_snapshots (config_id),
+		task_id TEXT REFERENCES tasks (task_id),
+		worker_id TEXT NOT NULL,
+		attempt_id TEXT NOT NULL,
+		supersedes_operation_id TEXT UNIQUE REFERENCES operations (id),
+		task_base_sha TEXT NOT NULL DEFAULT '',
+		integration_base_sha TEXT NOT NULL CHECK (integration_base_sha <> ''),
+		source_head_sha TEXT NOT NULL DEFAULT '',
+		source_commits TEXT NOT NULL DEFAULT '[]',
+		candidate_ref TEXT NOT NULL DEFAULT '',
+		candidate_tree_sha TEXT NOT NULL DEFAULT '',
+		result_sha TEXT NOT NULL DEFAULT '',
+		commit_metadata TEXT NOT NULL DEFAULT '',
+		test_report_ids TEXT NOT NULL DEFAULT '[]',
+		review_artifact_ids TEXT NOT NULL DEFAULT '[]',
+		approval_artifact_ids TEXT NOT NULL DEFAULT '[]',
+		error TEXT NOT NULL DEFAULT '',
+		started_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		CHECK (type <> 'INTEGRATE' OR (task_id IS NOT NULL AND commit_metadata <> '')),
+		CHECK (type <> 'PUBLISH' OR state <> 'TESTED'),
+		CHECK (state NOT IN ('APPLIED', 'TESTED', 'COMMITTED') OR result_sha <> ''),
+		CHECK (state NOT IN ('FAILED', 'ROLLED_BACK') OR error <> '')
+	);
+	CREATE INDEX operations_by_project ON operations (project_id, started_at);
+	CREATE INDEX operations_by_task ON operations (task_id);
+	CREATE TABLE operation_events (
+		event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		operation_id TEXT NOT NULL REFERENCES operations (id),
+		event TEXT NOT NULL,
+		from_state TEXT NOT NULL,
+		to_state TEXT NOT NULL,
+		reason TEXT NOT NULL,
+		at TEXT NOT NULL
+	);
+	CREATE INDEX operation_events_by_operation ON operation_events (operation_id, event_id)`},
 }

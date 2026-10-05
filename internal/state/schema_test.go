@@ -218,3 +218,54 @@ func TestTaskConfigUpdatesReferenceTheirEventAndSnapshots(t *testing.T) {
 		t.Fatal("a second update for the same event was accepted")
 	}
 }
+
+func TestOperationsJournalKeepsItsInvariants(t *testing.T) {
+	db := openDB(t)
+	if err := db.Migrate(Migrations); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO config_snapshots (config_id, created_at, document) VALUES ('sha256-x', 'now', '{}')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO tasks (task_id, config_id, task_base_sha, branch, state, version, max_fix_cycles, created_at, updated_at) VALUES ('t1', 'sha256-x', 'b', 'maestro/task-t1', 'NEW', 1, 3, 'now', 'now')"); err != nil {
+		t.Fatal(err)
+	}
+	insert := `INSERT INTO operations (id, type, state, version, project_id, config_id, task_id, worker_id, attempt_id,
+		supersedes_operation_id, integration_base_sha, result_sha, commit_metadata, error, started_at, updated_at)
+		VALUES (?, ?, ?, 1, 'p1', ?, ?, 'w', 'a', ?, 'base', ?, ?, ?, 'now', 'now')`
+	refused := []struct {
+		name string
+		args []any
+	}{
+		{"an unknown type", []any{"o1", "MERGE", "PREPARED", "sha256-x", "t1", nil, "", "{}", ""}},
+		{"an unknown state", []any{"o1", "SYNC", "DONE", "sha256-x", nil, nil, "", "", ""}},
+		{"an unknown snapshot", []any{"o1", "SYNC", "PREPARED", "sha256-missing", nil, nil, "", "", ""}},
+		{"an unknown task", []any{"o1", "SYNC", "PREPARED", "sha256-x", "missing", nil, "", "", ""}},
+		{"an integration without its task", []any{"o1", "INTEGRATE", "PREPARED", "sha256-x", nil, nil, "", "{}", ""}},
+		{"an integration without its commit metadata", []any{"o1", "INTEGRATE", "PREPARED", "sha256-x", "t1", nil, "", "", ""}},
+		{"a tested publication", []any{"o1", "PUBLISH", "TESTED", "sha256-x", nil, nil, "r", "", ""}},
+		{"an applied operation without its result", []any{"o1", "SYNC", "APPLIED", "sha256-x", nil, nil, "", "", ""}},
+		{"a failed operation without its error", []any{"o1", "SYNC", "FAILED", "sha256-x", nil, nil, "", "", ""}},
+		{"a superseded unknown operation", []any{"o1", "SYNC", "PREPARED", "sha256-x", nil, "missing", "", "", ""}},
+	}
+	for _, c := range refused {
+		if _, err := db.Exec(insert, c.args...); err == nil {
+			t.Fatalf("%s was accepted", c.name)
+		}
+	}
+	if _, err := db.Exec(insert, "o1", "INTEGRATE", "PREPARED", "sha256-x", "t1", nil, "", "{}", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(insert, "o2", "INTEGRATE", "PREPARED", "sha256-x", "t1", "o1", "", "{}", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(insert, "o3", "INTEGRATE", "PREPARED", "sha256-x", "t1", "o1", "", "{}", ""); err == nil {
+		t.Fatal("an operation was superseded twice")
+	}
+	if _, err := db.Exec("INSERT INTO operation_events (operation_id, event, from_state, to_state, reason, at) VALUES ('missing', 'prepare', '', 'PREPARED', '', 'now')"); err == nil {
+		t.Fatal("an event for an unknown operation was accepted")
+	}
+	if _, err := db.Exec("INSERT INTO operation_events (operation_id, event, from_state, to_state, reason, at) VALUES ('o1', 'prepare', '', 'PREPARED', '', 'now')"); err != nil {
+		t.Fatal(err)
+	}
+}
