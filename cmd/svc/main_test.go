@@ -211,3 +211,43 @@ func TestRunValidatesCapacityCeilings(t *testing.T) {
 		t.Fatalf("error %v", err)
 	}
 }
+
+func TestRunServesTasks(t *testing.T) {
+	t.Setenv("MAESTRO_DATA_HOME", shortDir(t))
+	socket := filepath.Join(shortDir(t), "svc.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	var output bytes.Buffer
+	go func() { finished <- run(ctx, []string{"--socket", socket}, &output) }()
+	waitForSocket(t, socket, finished)
+
+	// The task routes are served: an unknown project is reported as
+	// such, not as a daemon without tasks.
+	request, err := http.NewRequest(http.MethodGet, "http://maestro/v1/tasks?project_id=missing", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := transport.Client(socket).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var envelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusNotFound || envelope.Error.Message != "unknown project: missing" {
+		t.Fatalf("%d %+v", response.StatusCode, envelope)
+	}
+
+	cancel()
+	if err := <-finished; err != nil {
+		t.Fatalf("daemon stopped with %v", err)
+	}
+}
