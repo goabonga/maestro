@@ -15,10 +15,13 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/goabonga/maestro/internal/integration"
 	"github.com/goabonga/maestro/internal/ipc"
+	"github.com/goabonga/maestro/internal/launcher"
 	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/task"
+	"github.com/goabonga/maestro/internal/testrun"
 	"github.com/goabonga/maestro/internal/transport"
 	"github.com/goabonga/maestro/internal/worktree"
 )
@@ -101,7 +104,16 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	defer stop()
 	server := &ipc.Server{
 		DB: db, Store: store, Service: "maestro-svc", Version: Version, Shutdown: stop, Capacity: capacity,
-		Tasks: &task.Store{DB: db},
+		Tasks: &task.Store{DB: db}, Sync: &integration.Syncer{Store: integration.Store{DB: db}},
 	}
-	return transport.Serve(ctx, listener, server.Handler())
+	// A sync runs its tests confined; a host that cannot confine has no
+	// test runner, and every sync is refused rather than left untested.
+	if confined, err := launcher.New(); err == nil {
+		server.Sync.Tester = &testrun.Runner{Launcher: confined}
+	}
+	err = transport.Serve(ctx, listener, server.Handler())
+	// A sync running in the background finishes its journal before the
+	// store closes.
+	server.Wait()
+	return err
 }
