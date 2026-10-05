@@ -39,7 +39,7 @@ func TestRunVersion(t *testing.T) {
 func TestRunRejectsUnknownCommand(t *testing.T) {
 	var output bytes.Buffer
 	err := run(context.Background(), []string{"create"}, &output)
-	if err == nil || err.Error() != "unknown command: create" {
+	if err == nil || !strings.HasPrefix(err.Error(), "unknown command: create") || !strings.Contains(err.Error(), "maestro help") {
 		t.Fatalf("error %v", err)
 	}
 }
@@ -56,7 +56,7 @@ func TestRunWithoutArgumentsPrintsUsage(t *testing.T) {
 	if err := run(context.Background(), nil, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "Usage of maestro:") {
+	if !strings.Contains(output.String(), "Commands:") {
 		t.Fatalf("output %q", output.String())
 	}
 }

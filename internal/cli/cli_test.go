@@ -17,8 +17,10 @@ func TestRun(t *testing.T) {
 		fail bool
 	}{
 		{[]string{"--version"}, "maestro 0.0.0\n", false},
-		{[]string{"--help"}, "Usage of maestro:", false},
-		{nil, "Usage of maestro:", false},
+		{[]string{"--help"}, "Commands:", false},
+		{[]string{"-h"}, "Commands:", false},
+		{[]string{"help"}, "Commands:", false},
+		{nil, "Commands:", false},
 		{[]string{"create"}, "", true},
 		{[]string{"--unknown"}, "", true},
 	} {
