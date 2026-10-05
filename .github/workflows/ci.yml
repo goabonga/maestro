@@ -42,9 +42,33 @@ jobs:
           JOB_STATUS: ${{ job.status }}
         run: python3 scripts/ci_automation.py summary --title "Pipeline audit" --body "Plumber compliance audit."
 
+  signatures:
+    name: check commit signatures
+    needs: plumber
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify every pull request commit signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 scripts/ci_automation.py verify-signatures
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: python3 scripts/ci_automation.py summary --title "Commit signatures" --body "Every PR commit must carry a signature verified by GitHub."
+
   components:
     name: detect changed components
-    needs: plumber
+    # Pull requests stop here when a commit is not signed; pushes skip the
+    # signature job and still detect.
+    needs: [plumber, signatures]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     outputs:
       changed: ${{ steps.components.outputs.changed }}
@@ -182,27 +206,6 @@ jobs:
         env:
           JOB_STATUS: ${{ job.status }}
         run: python3 scripts/ci_automation.py summary --title "Documentation validation" --body "Generated branding and documentation build."
-
-  signatures:
-    name: check commit signatures
-    needs: plumber
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Verify every pull request commit signature
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: python3 scripts/ci_automation.py verify-signatures
-      - name: Job summary
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: python3 scripts/ci_automation.py summary --title "Commit signatures" --body "Every PR commit must carry a signature verified by GitHub."
 
   release-bump:
     # multicz decides what changed and bumps it; this job only runs it. A chore
