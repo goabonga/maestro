@@ -4,7 +4,8 @@
 // Package tui is the terminal dashboard of the maestro client: a Bubble
 // Tea program that reads the daemon's versioned API over its socket and
 // shows the daemon status, the registered projects, their tasks and one
-// task's history, refreshed periodically.
+// task's history, refreshed periodically. It also attaches the terminal
+// to a session, suspending itself for the time of the attach.
 package tui
 
 import (
@@ -85,6 +86,14 @@ type Model struct {
 	tasks     []taskDocument
 	detail    taskDocument
 	width     int
+
+	// prompting is set while the attach prompt reads a session id into
+	// input.
+	prompting bool
+	input     string
+	// notice and noticeErr report the outcome of the last attach.
+	notice    string
+	noticeErr error
 }
 
 // New returns the dashboard model for the given options.
@@ -153,7 +162,12 @@ func (m Model) fetch() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.prompting {
+			return m.promptKey(msg)
+		}
 		return m.key(msg)
+	case attachedMsg:
+		return m.attached(msg)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		return m, nil
@@ -213,6 +227,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "r":
 		return m, m.refresh()
+	case "a":
+		m.prompting, m.input = true, ""
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
