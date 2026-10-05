@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -72,11 +73,21 @@ type MCP struct {
 	Scope string `toml:"scope" json:"scope"`
 }
 
+// TestCommand declares one named test command. Argv is an explicit
+// argument vector, run as is: it is never handed to a shell.
+type TestCommand struct {
+	Argv []string `toml:"argv" json:"argv"`
+	// Timeout bounds one run of the command; nil means the runner's
+	// default.
+	Timeout *Duration `toml:"timeout" json:"timeout,omitempty"`
+}
+
 // Config is the effective configuration of a project.
 type Config struct {
-	Budgets Budgets          `toml:"budgets" json:"budgets"`
-	Agents  map[string]Agent `toml:"agents" json:"agents,omitempty"`
-	MCP     map[string]MCP   `toml:"mcp" json:"mcp,omitempty"`
+	Budgets Budgets                `toml:"budgets" json:"budgets"`
+	Agents  map[string]Agent       `toml:"agents" json:"agents,omitempty"`
+	MCP     map[string]MCP         `toml:"mcp" json:"mcp,omitempty"`
+	Tests   map[string]TestCommand `toml:"tests" json:"tests,omitempty"`
 }
 
 // Defaults are Maestro's own values, the weakest layer.
@@ -134,6 +145,22 @@ func (c Config) Validate() error {
 		}
 		if !mcpScope.MatchString(server.Scope) {
 			return invalid(`mcp.%s.scope %q must be "shared", "agent:<name>" or "role:<name>"`, serverName, server.Scope)
+		}
+	}
+	for testName, test := range c.Tests {
+		if !name.MatchString(testName) {
+			return invalid("test name %q must be lowercase letters, digits and dashes", testName)
+		}
+		if len(test.Argv) == 0 || test.Argv[0] == "" {
+			return invalid("tests.%s.argv needs at least a program", testName)
+		}
+		for _, arg := range test.Argv {
+			if strings.ContainsRune(arg, 0) {
+				return invalid("tests.%s.argv holds a NUL byte", testName)
+			}
+		}
+		if test.Timeout != nil && test.Timeout.Duration <= 0 {
+			return invalid("tests.%s.timeout must be positive", testName)
 		}
 	}
 	return nil

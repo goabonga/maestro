@@ -104,6 +104,14 @@ func TestLoadRefusesInvalidConfigurations(t *testing.T) {
 		"negative agent cap": "[agents.coder]\nmax_turns_per_task = -1\n",
 		"bad agent name":     "[agents.Coder]\ndriver = \"x\"\n",
 		"zero agent timeout": "[agents.coder]\nturn_timeout = \"0s\"\n",
+		"empty test argv":    "[tests.unit]\nargv = []\n",
+		"missing test argv":  "[tests.unit]\ntimeout = \"1m\"\n",
+		"empty test program": "[tests.unit]\nargv = [\"\", \"x\"]\n",
+		"bad test name":      "[tests.Unit]\nargv = [\"make\"]\n",
+		"zero test timeout":  "[tests.unit]\nargv = [\"make\"]\ntimeout = \"0s\"\n",
+		"shell string argv":  "[tests.unit]\nargv = \"make test\"\n",
+		"secret test arg":    "[tests.unit]\nargv = [\"make\", \"sk-ant-FAKE0123456789abcdefFAKE\"]\n",
+		"unknown test key":   "[tests.unit]\nargv = [\"make\"]\nshell = true\n",
 	} {
 		if _, err := Load(project(t, map[string]string{ProjectFile: content})); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("%s: expected ErrInvalid, got %v", name, err)
@@ -113,5 +121,32 @@ func TestLoadRefusesInvalidConfigurations(t *testing.T) {
 	_, err := Load(project(t, map[string]string{LocalFile: "[agents.coder]\npassword = \"x\"\n"}))
 	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), LocalFile) {
 		t.Fatalf("local layer: %v", err)
+	}
+}
+
+func TestLoadReadsTestCommands(t *testing.T) {
+	config, err := Load(project(t, map[string]string{
+		ProjectFile: `
+[tests.unit]
+argv = ["go", "test", "./..."]
+timeout = "10m"
+
+[tests.lint]
+argv = ["make", "lint"]
+`,
+		LocalFile: `
+[tests.unit]
+argv = ["go", "test", "-short", "./..."]
+`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := config.Tests["unit"]
+	if strings.Join(unit.Argv, " ") != "go test -short ./..." || unit.Timeout == nil || unit.Timeout.Duration != 10*time.Minute {
+		t.Fatalf("the local layer did not merge the test command key by key: %+v", unit)
+	}
+	if lint := config.Tests["lint"]; strings.Join(lint.Argv, " ") != "make lint" || lint.Timeout != nil {
+		t.Fatalf("lint %+v", lint)
 	}
 }

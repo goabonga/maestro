@@ -134,3 +134,39 @@ func TestPersistIsIdempotentAndVerified(t *testing.T) {
 		t.Fatal("an unknown id loaded")
 	}
 }
+
+func TestSnapshotFreezesTestCommands(t *testing.T) {
+	db, err := state.Open(filepath.Join(t.TempDir(), "maestro.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(state.Migrations); err != nil {
+		t.Fatal(err)
+	}
+	repository := project(t, map[string]string{ProjectFile: "[tests.unit]\nargv = [\"go\", \"test\", \"./...\"]\ntimeout = \"5m\"\n"})
+	snapshot, err := Take(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := Persist(db, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadSnapshot(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := loaded.Config.Tests["unit"]
+	if strings.Join(unit.Argv, " ") != "go test ./..." || unit.Timeout == nil || unit.Timeout.String() != "5m0s" {
+		t.Fatalf("loaded test command %+v", unit)
+	}
+	write(t, filepath.Join(repository, ProjectFile), "[tests.unit]\nargv = [\"go\", \"test\", \"-race\", \"./...\"]\ntimeout = \"5m\"\n")
+	changed, err := Take(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other, _, _ := changed.Encode(); other == id {
+		t.Fatal("a test command change kept the same config_id")
+	}
+}
