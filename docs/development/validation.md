@@ -73,3 +73,32 @@ and only under the conditions its observations impose.
 - An interactive `dash` inside the sandbox cannot hand the terminal back
   to its original process group on exit; this does not affect the agent
   CLIs.
+
+## Driver implementation checks
+
+The agent tests replay the committed prompt, multiline, resize and resume
+captures into the versioned turn detector, including output split inside
+escape sequences and UTF-8 characters. The Claude resume capture answers
+the remembered code word and then asks a follow-up question: its expected
+observation is `WAITING_INPUT`. Network-loss captures never become
+`COMPLETED`. Additional tests cover stale summaries above a new streamed
+answer, process death, interruptions, input waits and their preserved turn
+deadline, and terminal-control rejection in multiline prompts.
+
+Native identity tests use temporary worker directories and fixture
+processes. They check durable reopen, exclusive supervisor ownership,
+worktree/version/configuration binding, missing and ambiguous IDs, corrupt
+records and symlink escapes. A fixture CLI also creates its metadata from
+inside a confined PTY before confirmation. Automated tests do not launch
+the real Claude or Codex binaries or contact model APIs.
+
+Manual checks on 2026-10-05 exercised both reference binaries in private
+Bubblewrap namespaces with separate HOME directories: creation, forced
+runtime stop and exact-ID interactive resume. Native conversation files
+contained the expected UUIDs and actual assistant responses. The Go driver,
+launcher, PTY, metadata confirmation and detector were then exercised
+together for each agent and reached `COMPLETED`. These checks used explicit
+limits of 120 CPU seconds, 64 GiB of address space and 512 processes; they
+do not establish native compatibility with a different limits profile.
+Raw transcripts remain outside the repository; temporary credential copies
+were removed after these checks.

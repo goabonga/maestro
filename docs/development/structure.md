@@ -19,7 +19,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/launcher/` | Execution confinement: Bubblewrap namespaces, inherited limits, supervised groups. |
 | `internal/session/` | Persistent PTY sessions: bounded output, resize, stop, exit reconciliation, permissions epochs. |
 | `internal/fixture/` | PTY fixtures: record a session, strip secrets, replay it with expected outcomes. |
-| `internal/agent/` | Versioned driver registry and the host doctor: which agent versions may be driven. |
+| `internal/agent/` | Versioned registry, host doctor, durable native Claude/Codex identities and PTY turn detection. |
 | `internal/handoff/` | Handoff contracts: the versioned envelope, typed payloads, and their checks against the assignment and Git. |
 | `internal/config/` | Layered project configuration and the immutable snapshots identified by `config_id`. |
 | `internal/turn/` | Turn lifecycle: explicit transitions, persisted timeouts, retries as linked attempts ([details](turns.md)). |
