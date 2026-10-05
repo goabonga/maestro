@@ -113,3 +113,39 @@ func TestTasksReferenceTheirSnapshotAndKeepTheirContinuation(t *testing.T) {
 		t.Fatal("an event for an unknown task was accepted")
 	}
 }
+
+func TestBudgetTablesKeyReservationsAndOpenIntervals(t *testing.T) {
+	db := openDB(t)
+	if err := db.Migrate(Migrations); err != nil {
+		t.Fatal(err)
+	}
+	reserve := "INSERT INTO budget_turns (task_id, reservation_key, agent, reserved_at) VALUES (?, ?, ?, 'now')"
+	if _, err := db.Exec(reserve, "t1", "k1", "coder"); err == nil {
+		t.Fatal("a reservation for an unknown task was accepted")
+	}
+	if _, err := db.Exec("INSERT INTO config_snapshots (config_id, created_at, document) VALUES ('sha256-x', 'now', '{}')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO tasks (task_id, config_id, task_base_sha, branch, state, version, max_fix_cycles, created_at, updated_at) VALUES ('t1', 'sha256-x', 'b', 'maestro/task-t1', 'NEW', 1, 3, 'now', 'now')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(reserve, "t1", "k1", "coder"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(reserve, "t1", "k1", "reviewer"); err == nil {
+		t.Fatal("a reservation key was reserved twice")
+	}
+	if _, err := db.Exec(reserve, "t1", "", "coder"); err == nil {
+		t.Fatal("an empty reservation key was accepted")
+	}
+	clock := "INSERT INTO budget_time (task_id, open_step, open_since, open_mark, updated_at) VALUES ('t1', ?, ?, ?, 'now')"
+	if _, err := db.Exec(clock, "coding", "", ""); err == nil {
+		t.Fatal("an open interval without its timestamps was accepted")
+	}
+	if _, err := db.Exec(clock, "coding", "now", "now"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE budget_time SET active_ns = -1"); err == nil {
+		t.Fatal("a negative active time was accepted")
+	}
+}

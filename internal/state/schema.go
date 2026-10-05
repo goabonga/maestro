@@ -91,4 +91,22 @@ var Migrations = []Migration{
 		at TEXT NOT NULL
 	);
 	CREATE INDEX task_events_by_task ON task_events (task_id, event_id)`},
+	{Version: 6, SQL: `CREATE TABLE budget_turns (
+		task_id TEXT NOT NULL REFERENCES tasks (task_id),
+		reservation_key TEXT NOT NULL CHECK (reservation_key <> ''),
+		agent TEXT NOT NULL CHECK (agent <> ''),
+		reserved_at TEXT NOT NULL,
+		PRIMARY KEY (task_id, reservation_key)
+	);
+	CREATE INDEX budget_turns_by_agent ON budget_turns (task_id, agent);
+	CREATE TABLE budget_time (
+		task_id TEXT PRIMARY KEY REFERENCES tasks (task_id),
+		active_ns INTEGER NOT NULL DEFAULT 0 CHECK (active_ns >= 0),
+		open_step TEXT NOT NULL DEFAULT '',
+		open_since TEXT NOT NULL DEFAULT '',
+		open_mark TEXT NOT NULL DEFAULT '',
+		open_ns INTEGER NOT NULL DEFAULT 0 CHECK (open_ns >= 0),
+		updated_at TEXT NOT NULL,
+		CHECK (open_step = '' OR (open_since <> '' AND open_mark <> ''))
+	)`},
 }
