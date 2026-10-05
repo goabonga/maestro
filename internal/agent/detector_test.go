@@ -110,6 +110,18 @@ func TestTerminalReconstructsChunkedRedraws(t *testing.T) {
 	}
 }
 
+func TestTerminalErasureAtTheRightMarginIsBounded(t *testing.T) {
+	s := newTerminal(2, 3)
+	s.feed([]byte("abc\x1b[1K"))
+	if strings.TrimSpace(s.text()) != "" {
+		t.Fatal("right-margin erasure did not clear the line")
+	}
+	s.feed([]byte("abc\x1b7\x1b8\x1b[2K\x1b[99999999999999999G\x1b[1K"))
+	if strings.TrimSpace(s.text()) != "" {
+		t.Fatal("saved-cursor erasure escaped the terminal bounds")
+	}
+}
+
 func TestDetectorDoesNotReuseAVisibleFooterWhileWorking(t *testing.T) {
 	now := time.Now()
 	for _, kind := range []string{"claude-code", "codex"} {

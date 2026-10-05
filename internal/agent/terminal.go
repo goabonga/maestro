@@ -167,7 +167,7 @@ func (t *terminal) csi(final byte) {
 	case 'K':
 		start, end := t.col, len(t.lines[0])
 		if arg(0, 0) == 1 {
-			start, end = 0, t.col+1
+			start, end = 0, min(t.col+1, len(t.lines[0]))
 		}
 		if arg(0, 0) == 2 {
 			start = 0
