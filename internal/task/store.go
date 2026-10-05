@@ -136,6 +136,45 @@ func (s Store) Transition(taskID string, in Input) (Task, error) {
 		return Task{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := write(tx, current, next, in, at); err != nil {
+		return Task{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Task{}, err
+	}
+	return next, nil
+}
+
+// TransitionTx applies one event to a task inside the caller's
+// transaction, so the task's new state commits or rolls back with the
+// caller's other writes. The task is read inside the transaction and
+// written only if it is still at the state and version that were read.
+// Every failure, a stale event included, writes nothing: the event of
+// a stale response is not logged, since the caller's transaction is
+// expected to roll back.
+func (s Store) TransitionTx(tx *sql.Tx, taskID string, in Input) (Task, error) {
+	current, err := scan(tx.QueryRow(`SELECT `+columns+` FROM tasks WHERE task_id = ?`, taskID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Task{}, fmt.Errorf("%w: %s", ErrNotFound, taskID)
+	}
+	if err != nil {
+		return Task{}, err
+	}
+	at := s.now()
+	next, err := Apply(current, in, at)
+	if err != nil {
+		return current, err
+	}
+	if err := write(tx, current, next, in, at); err != nil {
+		return Task{}, err
+	}
+	return next, nil
+}
+
+// write stores the transition of a task from current to next with its
+// event, inside tx, only if the task is still at current's state and
+// version: a concurrent transition fails with ErrTransition.
+func write(tx *sql.Tx, current, next Task, in Input, at time.Time) error {
 	result, err := tx.Exec(`UPDATE tasks SET state = ?, version = ?, resume_state = ?, blocked_reason = ?,
 		head_sha = ?, approved_sha = ?, result_sha = ?, fix_cycles = ?, conflict_base = ?,
 		conflict_failures = ?, resolution_approved_sha = ?, updated_at = ?, reason = ?
@@ -143,25 +182,19 @@ func (s Store) Transition(taskID string, in Input) (Task, error) {
 		string(next.State), next.Version, string(next.ResumeState), next.BlockedReason,
 		next.HeadSHA, next.ApprovedSHA, next.ResultSHA, next.FixCycles, next.ConflictBase,
 		next.ConflictFailures, next.ResolutionApprovedSHA, stamp(at), next.Reason,
-		taskID, string(current.State), current.Version)
+		current.ID, string(current.State), current.Version)
 	if err != nil {
-		return Task{}, fmt.Errorf("transition task %s: %w", taskID, err)
+		return fmt.Errorf("transition task %s: %w", current.ID, err)
 	}
 	if changed, err := result.RowsAffected(); err != nil {
-		return Task{}, err
+		return err
 	} else if changed != 1 {
-		return Task{}, fmt.Errorf("%w: %s changed concurrently", ErrTransition, taskID)
+		return fmt.Errorf("%w: %s changed concurrently", ErrTransition, current.ID)
 	}
-	if err := record(tx, Record{
-		TaskID: taskID, Event: in.Event, From: current.State, To: next.State,
+	return record(tx, Record{
+		TaskID: current.ID, Event: in.Event, From: current.State, To: next.State,
 		Revision: in.Revision, Reason: in.Reason, At: at,
-	}); err != nil {
-		return Task{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return Task{}, err
-	}
-	return next, nil
+	})
 }
 
 // logStale records a stale response without touching the task.
