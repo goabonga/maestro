@@ -101,3 +101,33 @@ worker is still at the state and version it read, so a concurrent
 transition makes the later one fail with `ErrTransition` instead of
 overwriting it. Each event row records the task and turn of the
 assignment the worker held or took.
+
+## Daemon API
+
+The daemon serves the registry read-only on its versioned JSON API
+(`internal/ipc`, `workers.go`). `maestro-svc` wires `ipc.Server.Workers`
+to a `worker.Store` on its state database; a server without one answers
+every worker route with `not_found`. Like the task routes, both name
+their project with `project_id` in the query, and a worker of another
+project is not disclosed.
+
+| Route | Success |
+| --- | --- |
+| `GET /v1/workers?project_id=` | `200`, the project's workers, by name |
+| `GET /v1/workers/{name}?project_id=` | `200`, the worker with its `events` |
+
+A worker carries its `name`, `agent`, `agent_kind`, `driver`,
+`repository`, `state`, `version`, `reason`, `created_at`, `updated_at`
+and, when it holds one, its `assignment` (`task_id`, `role`,
+`turn_id`). The events of `show` are the most recent ones, at most
+`ipc.RecentWorkerEvents` (20), oldest first; each names the task and
+turn it is about, when there is one.
+
+| Code | Status | Cause |
+| --- | --- | --- |
+| `invalid_request` | 400 | missing `project_id` |
+| `not_found` | 404 | unknown project, or a worker unknown in that project |
+
+`maestro worker list` and `maestro worker show <name>` print these
+documents on the project of the current repository, or the one named
+by `--project <id>`.
