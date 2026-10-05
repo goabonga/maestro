@@ -23,6 +23,7 @@ import (
 	"github.com/goabonga/maestro/internal/task"
 	"github.com/goabonga/maestro/internal/testrun"
 	"github.com/goabonga/maestro/internal/transport"
+	"github.com/goabonga/maestro/internal/worker"
 	"github.com/goabonga/maestro/internal/worktree"
 )
 
@@ -105,7 +106,7 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	server := &ipc.Server{
 		DB: db, Store: store, Service: "maestro-svc", Version: Version, Shutdown: stop, Capacity: capacity,
 		Tasks: &task.Store{DB: db}, Sync: &integration.Syncer{Store: integration.Store{DB: db}},
-		Operations: &integration.Store{DB: db},
+		Operations: &integration.Store{DB: db}, Workers: &worker.Store{DB: db},
 	}
 	// A sync runs its tests confined; a host that cannot confine has no
 	// test runner, and every sync is refused rather than left untested.
