@@ -211,7 +211,7 @@ jobs:
     # multicz decides what changed and bumps it; this job only runs it. A chore
     # commit produces an empty plan, so nothing is bumped, pushed or released.
     name: release bump
-    needs: [plumber, components, licenses, scripts, go, documentation]
+    needs: [components, licenses, scripts, go, documentation]
     if: >-
       !failure() && !cancelled() &&
       needs.components.outputs.changed != '[]' &&
