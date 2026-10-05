@@ -3,11 +3,16 @@
 
 SHELL := /bin/bash
 MULTICZ := uv tool run --with multicz-go-deps-plugin multicz
+BIN := bin
 
-.PHONY: check scripts-check docs icons license-check release-plan release-validate go-test go-check
+.PHONY: check build scripts-check docs icons license-check release-plan release-validate go-test go-check
 
 check: license-check release-validate scripts-check go-check
 	python3 -c 'import tomllib; tomllib.load(open("zensical.toml", "rb"))'
+
+build:
+	go build -trimpath -o $(BIN)/maestro ./cmd/cli
+	go build -trimpath -o $(BIN)/maestro-svc ./cmd/svc
 
 scripts-check:
 	python3 -m compileall -q scripts -x '/\.venv/'
