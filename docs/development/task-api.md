@@ -21,6 +21,7 @@ transition.
 | `GET /v1/tasks/{id}?project_id=` | — | `200`, the task with its `events` |
 | `POST /v1/tasks/{id}/cancel` | `{"project_id"}` | `200`, the cancelled task |
 | `POST /v1/tasks/{id}/resume` | `{"project_id"}` | `200`, the resumed task |
+| `POST /v1/tasks/{id}/config` | `{"project_id"}` | `200`, the configuration update (see [Configuration update](config-update.md)) |
 
 Bodies refuse unknown fields. Errors map onto the stable codes:
 

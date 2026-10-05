@@ -72,6 +72,53 @@ $ maestro task resume 3f2b8c1e-…
 task 3f2b8c1e-…: NEW
 ```
 
+## Update the configuration
+
+A task keeps the configuration snapshot it was created with. `maestro
+task config update <id>` asks it to adopt the project's configuration and
+instruction files as they are now:
+
+```console
+$ maestro task config update 3f2b8c1e-…
+task 3f2b8c1e-…: configuration updated
+previous:  sha256-6eaf35ae…
+config:    sha256-d572a868…
+impact:    objective
+state:     PLANNING
+
+KEY                         CHANGE   IMPACT
+budgets.max_turns_per_task  changed  ceiling
+maestro/coder.md            added    objective
+```
+
+The daemon takes a new snapshot, lists every key that differs from the
+task's own and applies the update. When nothing differs, it reports
+`configuration unchanged` and changes nothing.
+
+Each change has an impact, and the strongest one decides where the task
+continues:
+
+| Impact | Changes | The task continues from |
+| --- | --- | --- |
+| `objective` | instruction files, agents, MCP servers, a lowered or added budget bound | `PLANNING` at the latest |
+| `verification` | test commands | `TESTING` at the latest |
+| `ceiling` | a raised or removed budget ceiling: turn caps, timeouts, `wall_timeout` | its current state |
+
+A task never moves forward: a `NEW` or `PLANNING` task stays where it
+is. A `BLOCKED` task stays blocked and its resume state moves instead;
+`maestro task resume` then continues from there. Raising a budget
+ceiling is the way to let a task blocked on that budget go on.
+
+An objective or verification change also drops the approvals and the
+integration candidate the task held: results produced under the old
+configuration no longer count for it. The turns and time the task
+consumed are never reset, and its fix cycles are kept.
+
+The update is refused for a `DONE` or `CANCELLED` task and while one of
+the task's turns has not ended. Every update is recorded in the task's
+history (`maestro task show`) with the old and new configuration ids
+and the changes.
+
 Refusals are reported with the daemon's error code — `not_found` for an
 unknown task or project, `conflict` for a refused transition,
 `invalid_request` for a malformed request.
