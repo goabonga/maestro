@@ -182,28 +182,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if project.State() != worktree.StateOK {
-		fail(w, r, http.StatusConflict, CodeConflict,
-			fmt.Sprintf("the repository of project %s is missing at %s; relocate it first", project.ID, project.UserRepository))
-		return
-	}
-	workTree, err := userWorkTree(project)
-	if err != nil {
-		fail(w, r, http.StatusConflict, CodeConflict, err.Error())
-		return
-	}
-	snapshot, err := config.Take(workTree)
-	if errors.Is(err, config.ErrInvalid) {
-		fail(w, r, http.StatusBadRequest, CodeInvalidRequest, err.Error())
-		return
-	}
-	if err != nil {
-		fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
-		return
-	}
-	configID, err := config.Persist(s.DB, snapshot)
-	if err != nil {
-		fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
+	configID, ok := s.snapshotProject(w, r, project)
+	if !ok {
 		return
 	}
 	base, err := integrationHead(project)
@@ -221,6 +201,37 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, r, http.StatusCreated, viewTask(created))
+}
+
+// snapshotProject takes and persists the configuration snapshot of a
+// project's user repository as it is now, writing the error envelope
+// when it cannot.
+func (s *Server) snapshotProject(w http.ResponseWriter, r *http.Request, project worktree.Project) (string, bool) {
+	if project.State() != worktree.StateOK {
+		fail(w, r, http.StatusConflict, CodeConflict,
+			fmt.Sprintf("the repository of project %s is missing at %s; relocate it first", project.ID, project.UserRepository))
+		return "", false
+	}
+	workTree, err := userWorkTree(project)
+	if err != nil {
+		fail(w, r, http.StatusConflict, CodeConflict, err.Error())
+		return "", false
+	}
+	snapshot, err := config.Take(workTree)
+	if errors.Is(err, config.ErrInvalid) {
+		fail(w, r, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		return "", false
+	}
+	if err != nil {
+		fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
+		return "", false
+	}
+	configID, err := config.Persist(s.DB, snapshot)
+	if err != nil {
+		fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
+		return "", false
+	}
+	return configID, true
 }
 
 // transitionRequest is the body of the task mutations.
