@@ -21,6 +21,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/fixture/` | PTY fixtures: record a session, strip secrets, replay it with expected outcomes. |
 | `internal/agent/` | Versioned driver registry and the host doctor: which agent versions may be driven. |
 | `internal/handoff/` | Handoff contracts: the versioned envelope, typed payloads, and their checks against the assignment and Git. |
+| `internal/config/` | Layered project configuration and the immutable snapshots identified by `config_id`. |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -30,8 +31,9 @@ component owns it, and how the pieces depend on each other.
 | `Makefile` | Entry points for every local check and build. |
 
 Go dependencies are pinned by `go.mod` and kept minimal: the standard
-library plus `modernc.org/sqlite` (SQLite without CGO) and
-`github.com/creack/pty` (PTY allocation).
+library plus `modernc.org/sqlite` (SQLite without CGO),
+`github.com/creack/pty` (PTY allocation) and `github.com/BurntSushi/toml`
+(project configuration).
 
 ## Components
 
@@ -280,6 +282,27 @@ repair in a new attempt. The repair is accepted only if the fingerprint
 is unchanged and its document is valid: a new or moved commit, a staged
 change, an edited or added file, a second missing or invalid document,
 or an error that is neither missing nor invalid blocks the task instead.
+
+## Configuration snapshots
+
+`internal/config` loads a project's configuration in layers, the
+stronger replacing the weaker key by key: Maestro's defaults, the
+versioned `.maestro.toml`, then the unversioned `.maestro.local.toml`.
+It covers the project budgets (`max_turns_per_task`, `turn_timeout`,
+`input_wait_timeout`, `task_timeout`), named agents (driver, base URL,
+model, `api_key_env`, per-agent turn limits) and MCP servers (command,
+arguments, scope `shared`, `agent:<name>` or `role:<name>`). Unknown
+keys are refused. Secrets never enter configuration: a key named like a
+secret (except the `*_env` keys naming a variable) or a value shaped
+like one is refused in either file.
+
+A snapshot freezes the effective configuration with the instruction
+files under `maestro/` (regular UTF-8 files only, bounded, no secret
+shape), the handoff contract version and the validated drivers. Its
+`config_id` is the SHA-256 of its canonical form, so equal snapshots
+share one id; it is stored once in SQLite, and loading it checks that
+the content still hashes to that id. Tasks will carry this id so that a
+file changed on disk never changes a running task.
 
 ## Durable store
 
