@@ -358,9 +358,12 @@ var table = map[Event]row{
 			return block(t, t.State, in.Reason, "")
 		}},
 	Resume: {from: []State{Blocked},
-		guard: func(_ Task, in Input) error {
+		guard: func(t Task, in Input) error {
 			if !in.Guard.CauseLifted || !in.Guard.Reconciled {
 				return guardError("the cause is not lifted or the step not reconciled")
+			}
+			if !contains(States, t.ResumeState) || t.ResumeState.Terminal() || t.ResumeState == Blocked {
+				return guardError(fmt.Sprintf("the stored continuation %q is not a state to resume in", t.ResumeState))
 			}
 			return nil
 		},
