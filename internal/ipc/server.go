@@ -13,6 +13,7 @@ import (
 	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/task"
+	"github.com/goabonga/maestro/internal/worker"
 	"github.com/goabonga/maestro/internal/worktree"
 )
 
@@ -46,6 +47,10 @@ type Server struct {
 	// Operations journals the integration operations; nil disables
 	// the publication route.
 	Operations *integration.Store
+
+	// Workers reads the worker registry of the projects; nil disables
+	// the worker routes.
+	Workers *worker.Store
 }
 
 // projectView is the JSON shape of a project.
@@ -71,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	s.taskRoutes(mux)
 	s.syncRoutes(mux)
 	s.publishRoutes(mux)
+	s.workerRoutes(mux)
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusNotFound, CodeNotFound, "unknown route: "+r.URL.Path)
 	})
