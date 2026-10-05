@@ -190,8 +190,12 @@ type Input struct {
 
 // Task is one unit of work driven through the workflow.
 type Task struct {
-	ID       string
-	ConfigID string
+	ID string
+	// ProjectID is the registered project the task belongs to.
+	ProjectID string
+	// Description is what the task is asked to achieve.
+	Description string
+	ConfigID    string
 	// BaseSHA is the commit the task branch starts from.
 	BaseSHA string
 	Branch  string

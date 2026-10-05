@@ -6,6 +6,7 @@ package task
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func fixture(t *testing.T) (Store, *clock, string) {
 
 func create(t *testing.T, store Store, configID string) Task {
 	t.Helper()
-	created, err := store.Create(configID, sha('0'))
+	created, err := store.Create("project-1", "add a flag", configID, sha('0'))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,8 @@ func toReview(rev string) []Input {
 func TestCreateFreezesConfigBaseAndBranch(t *testing.T) {
 	store, _, configID := fixture(t)
 	created := create(t, store, configID)
-	if created.State != New || created.ConfigID != configID || created.BaseSHA != sha('0') ||
+	if created.State != New || created.ProjectID != "project-1" || created.Description != "add a flag" ||
+		created.ConfigID != configID || created.BaseSHA != sha('0') ||
 		created.Branch != worktree.TaskBranch(created.ID) || created.MaxFixCycles != DefaultMaxFixCycles {
 		t.Fatalf("created=%+v", created)
 	}
@@ -84,10 +86,10 @@ func TestCreateFreezesConfigBaseAndBranch(t *testing.T) {
 	if err != nil || len(events) != 1 || events[0].Event != Created || events[0].From != "" || events[0].To != New {
 		t.Fatalf("events=%+v err=%v", events, err)
 	}
-	if _, err := store.Create("sha256-missing", sha('0')); err == nil {
+	if _, err := store.Create("project-1", "add a flag", "sha256-missing", sha('0')); err == nil {
 		t.Fatal("a task on an unknown snapshot was created")
 	}
-	if _, err := store.Create(configID, "main"); err == nil {
+	if _, err := store.Create("project-1", "add a flag", configID, "main"); err == nil {
 		t.Fatal("a task on a symbolic base was created")
 	}
 	if _, err := store.Get("missing"); !errors.Is(err, ErrNotFound) {
@@ -291,5 +293,47 @@ func TestConcurrentTransitionLoses(t *testing.T) {
 	}
 	if events, err := store.Events(id); err != nil || len(events) != 2 {
 		t.Fatalf("events=%+v err=%v", events, err)
+	}
+}
+
+func TestCreateRefusesInvalidRequests(t *testing.T) {
+	store, _, configID := fixture(t)
+	for name, request := range map[string][2]string{
+		"no project":     {"", "add a flag"},
+		"blank":          {"project-1", " \n\t"},
+		"oversized":      {"project-1", strings.Repeat("x", MaxDescription+1)},
+		"not utf-8 text": {"project-1", "\xff\xfe"},
+	} {
+		if _, err := store.Create(request[0], request[1], configID, sha('0')); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s: err=%v", name, err)
+		}
+	}
+	created, err := store.Create("project-1", "  trimmed\n", configID, sha('0'))
+	if err != nil || created.Description != "trimmed" {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+}
+
+func TestListReturnsTheTasksOfOneProjectOldestFirst(t *testing.T) {
+	store, c, configID := fixture(t)
+	first, err := store.Create("project-1", "first", configID, sha('0'))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.at = c.at.Add(time.Minute)
+	if _, err := store.Create("project-2", "elsewhere", configID, sha('0')); err != nil {
+		t.Fatal(err)
+	}
+	c.at = c.at.Add(time.Minute)
+	second, err := store.Create("project-1", "second", configID, sha('0'))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.List("project-1")
+	if err != nil || len(tasks) != 2 || tasks[0] != first || tasks[1] != second {
+		t.Fatalf("tasks=%+v err=%v", tasks, err)
+	}
+	if tasks, err := store.List("project-3"); err != nil || len(tasks) != 0 {
+		t.Fatalf("tasks=%+v err=%v", tasks, err)
 	}
 }
