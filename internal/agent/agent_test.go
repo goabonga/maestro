@@ -111,3 +111,14 @@ func TestDoctorReportsEachRequirement(t *testing.T) {
 		t.Fatalf("missing codex %+v", checks[2])
 	}
 }
+
+func TestDriversListsEveryRegisteredDriver(t *testing.T) {
+	drivers := Builtin().Drivers()
+	if len(drivers) != 2 || drivers[0].Name != "claude-code-2.1" || drivers[1].Name != "codex-0.160" {
+		t.Fatalf("drivers %+v", drivers)
+	}
+	drivers[0].Name = "changed"
+	if Builtin().Drivers()[0].Name != "claude-code-2.1" {
+		t.Fatal("the registry handed out its own slice")
+	}
+}

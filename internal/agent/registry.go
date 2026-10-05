@@ -105,6 +105,11 @@ func NewRegistry(drivers ...Driver) (*Registry, error) {
 	return &Registry{drivers: append([]Driver(nil), drivers...)}, nil
 }
 
+// Drivers returns every registered driver, in registration order.
+func (r *Registry) Drivers() []Driver {
+	return append([]Driver(nil), r.drivers...)
+}
+
 // Kinds returns the kinds the registry knows, in registration order.
 func (r *Registry) Kinds() []Driver {
 	seen := map[string]bool{}
