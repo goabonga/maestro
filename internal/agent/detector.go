@@ -74,6 +74,22 @@ func (d *TurnDetector) Begin(now time.Time) {
 	d.state, d.active = DetectRunning, true
 }
 
+// Continue records an admitted answer to an input wait. It clears old dialog
+// evidence but preserves the original turn deadline; only Begin creates a
+// new turn. Approval decisions remain the supervisor's responsibility.
+func (d *TurnDetector) Continue(now time.Time) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.active || d.state != DetectWaitingInput {
+		return errors.New("detector is not waiting for input")
+	}
+	d.screen = newTerminal(d.config.Rows, d.config.Cols)
+	d.waitingSince = time.Time{}
+	d.lastOutput = now
+	d.state = DetectRunning
+	return nil
+}
+
 // Feed consumes raw terminal bytes, including escapes split across chunks.
 func (d *TurnDetector) Feed(data []byte, now time.Time) {
 	d.mu.Lock()
@@ -161,17 +177,18 @@ func (d *TurnDetector) Poll(now time.Time, process session.State) Detection {
 		return d.state
 	}
 	d.waitingSince = time.Time{}
-	prompt, done := "❯", claudeDone.MatchString(text)
+	prompt, footer, bullet := "❯", claudeDone, "●"
 	if d.kind == "codex" {
-		prompt, done = "›", codexDone.MatchString(text)
+		prompt, footer, bullet = "›", codexDone, "•"
 	}
+	done := freshFooter(text, footer, prompt, bullet)
 	ready := false
 	for _, line := range strings.Split(text, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), prompt) {
 			ready = true
 		}
 	}
-	if done && ready && !now.Before(d.lastOutput.Add(d.config.Idle)) {
+	if done && ready && !busyScreen(text) && !now.Before(d.lastOutput.Add(d.config.Idle)) {
 		d.state = DetectCompleted
 		d.active = false
 		return d.state
@@ -182,6 +199,45 @@ func (d *TurnDetector) Poll(now time.Time, process session.State) Detection {
 		d.state = DetectUnknown
 	}
 	return d.state
+}
+
+// A previous turn's summary can remain above a new echoed prompt or streamed
+// answer. It cannot prove the new turn finished, even if a spinner vanishes.
+func freshFooter(text string, footer *regexp.Regexp, prompt, bullet string) bool {
+	matches := footer.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return false
+	}
+	latest := matches[len(matches)-1][0]
+	offset := 0
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		activity := strings.HasPrefix(trimmed, bullet+" ")
+		if strings.HasPrefix(trimmed, prompt) {
+			tail := strings.TrimSpace(strings.TrimPrefix(trimmed, prompt))
+			if tail != "" && tail != "Ask Codex to do anything" {
+				activity = true
+			}
+		}
+		if activity && offset > latest {
+			return false
+		}
+		offset += len(line) + 1
+	}
+	return true
+}
+
+func busyScreen(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "• Working (") {
+			return true
+		}
+		if len(line) > 0 && strings.ContainsRune("✻✽✢✶*·", []rune(line)[0]) && strings.Contains(line, "…") && !strings.Contains(line, "· done ") {
+			return true
+		}
+	}
+	return false
 }
 
 func hasAny(text string, markers ...string) bool {

@@ -110,6 +110,76 @@ func TestTerminalReconstructsChunkedRedraws(t *testing.T) {
 	}
 }
 
+func TestDetectorDoesNotReuseAVisibleFooterWhileWorking(t *testing.T) {
+	now := time.Now()
+	for _, kind := range []string{"claude-code", "codex"} {
+		d := detector(t, kind)
+		d.Begin(now)
+		text := "✻ Cooked for 1s · done 12:00 AM\r\n✽ Thinking…\r\n❯ "
+		if kind == "codex" {
+			text = "Worked for 1s • 12:00 AM\r\n• Working (1s • esc to interrupt)\r\n› "
+		}
+		d.Feed([]byte(text), now)
+		if got := d.Poll(now.Add(time.Second), session.State{Phase: session.Running}); got != DetectUnknown {
+			t.Fatalf("busy screen became %s", got)
+		}
+	}
+	d := detector(t, "codex")
+	d.Begin(now)
+	d.Feed([]byte("Worked for 1s • 12:00 AM\r\n› New prompt\r\n• A partial answer\r\n› Ask Codex to do anything"), now)
+	if got := d.Poll(now.Add(time.Second), session.State{Phase: session.Running}); got != DetectUnknown {
+		t.Fatalf("old footer completed a partial answer: %s", got)
+	}
+}
+
+func TestInputContinuationPreservesTheOriginalTurnDeadline(t *testing.T) {
+	d := detector(t, "codex")
+	now := time.Now()
+	live := session.State{Phase: session.Running}
+	d.Begin(now)
+	d.Feed([]byte("• Which color?"), now.Add(19*time.Minute))
+	if got := d.Poll(now.Add(19*time.Minute), live); got != DetectWaitingInput {
+		t.Fatal(got)
+	}
+	if err := d.Continue(now.Add(19 * time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Poll(now.Add(20*time.Minute), live); got != DetectFailed {
+		t.Fatalf("continuation reset the turn budget: %s", got)
+	}
+	if err := d.Continue(now.Add(21 * time.Minute)); err == nil {
+		t.Fatal("terminal turn continued")
+	}
+}
+
+func TestNetworkCapturesNeverBecomeCompleted(t *testing.T) {
+	for _, agent := range []struct{ path, kind, version string }{{"claude", "claude-code", "2.1.289"}, {"codex", "codex", "0.160.0"}} {
+		f, err := fixture.Load(filepath.Join("..", "fixture", "testdata", agent.path, agent.version, "network.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := detector(t, agent.kind)
+		now := time.Now()
+		d.Begin(now)
+		for _, event := range f.Events {
+			if event.Kind != fixture.Output {
+				continue
+			}
+			d.Feed(event.Data, now.Add(event.At()))
+			if got := d.Poll(now.Add(event.At()+time.Second), session.State{Phase: session.Running}); got == DetectCompleted {
+				var lines []string
+				for _, line := range strings.Split(d.screen.text(), "\n") {
+					line = strings.TrimSpace(line)
+					if line != "" {
+						lines = append(lines, line)
+					}
+				}
+				t.Fatalf("%s network silence completed at %d; screen: %q", agent.path, event.AtMillis, lines)
+			}
+		}
+	}
+}
+
 // Real sanitized captures are replayed without a native binary, terminal or
 // network. These assertions check driver conclusions, not just decoding.
 func TestDetectorReplaysReferenceOutcomes(t *testing.T) {
