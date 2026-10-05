@@ -81,3 +81,35 @@ func TestTurnsReferenceTheirSnapshotAndPreviousTurn(t *testing.T) {
 		t.Fatal("an event for an unknown turn was accepted")
 	}
 }
+
+func TestTasksReferenceTheirSnapshotAndKeepTheirContinuation(t *testing.T) {
+	db := openDB(t)
+	if err := db.Migrate(Migrations); err != nil {
+		t.Fatal(err)
+	}
+	insert := "INSERT INTO tasks (task_id, config_id, task_base_sha, branch, state, version, resume_state, blocked_reason, max_fix_cycles, created_at, updated_at) VALUES (?, 'sha256-x', 'b', ?, ?, 1, ?, ?, 3, 'now', 'now')"
+	if _, err := db.Exec(insert, "t1", "maestro/task-t1", "NEW", "", ""); err == nil {
+		t.Fatal("a task without its configuration snapshot was accepted")
+	}
+	if _, err := db.Exec("INSERT INTO config_snapshots (config_id, created_at, document) VALUES ('sha256-x', 'now', '{}')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(insert, "t1", "maestro/task-t1", "NEW", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(insert, "t2", "maestro/task-t1", "NEW", "", ""); err == nil {
+		t.Fatal("a second task on the same branch was accepted")
+	}
+	if _, err := db.Exec(insert, "t2", "maestro/task-t2", "BLOCKED", "", "timeout"); err == nil {
+		t.Fatal("a blocked task without its resume state was accepted")
+	}
+	if _, err := db.Exec(insert, "t2", "maestro/task-t2", "BLOCKED", "TESTING", ""); err == nil {
+		t.Fatal("a blocked task without its reason was accepted")
+	}
+	if _, err := db.Exec(insert, "t2", "maestro/task-t2", "BLOCKED", "TESTING", "timeout"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO task_events (task_id, event, from_state, to_state, reason, at) VALUES ('missing', 'create', '', 'NEW', '', 'now')"); err == nil {
+		t.Fatal("an event for an unknown task was accepted")
+	}
+}
