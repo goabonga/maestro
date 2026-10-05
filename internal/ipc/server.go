@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 
+	"github.com/goabonga/maestro/internal/integration"
 	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/task"
@@ -33,6 +35,13 @@ type Server struct {
 	// Tasks stores the tasks of the projects; nil disables the task
 	// routes.
 	Tasks *task.Store
+
+	// Sync imports frozen commits of the user repositories; nil
+	// disables the sync routes.
+	Sync *integration.Syncer
+
+	// syncs tracks the syncs running in the background.
+	syncs sync.WaitGroup
 }
 
 // projectView is the JSON shape of a project.
@@ -56,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/status", s.status)
 	mux.HandleFunc("GET /v1/sessions/{id}/stream", s.streamSession)
 	s.taskRoutes(mux)
+	s.syncRoutes(mux)
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusNotFound, CodeNotFound, "unknown route: "+r.URL.Path)
 	})
