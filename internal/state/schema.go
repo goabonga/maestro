@@ -57,4 +57,38 @@ var Migrations = []Migration{
 		at TEXT NOT NULL
 	);
 	CREATE INDEX turn_events_by_turn ON turn_events (turn_id, event_id)`},
+	{Version: 5, SQL: `CREATE TABLE tasks (
+		task_id TEXT PRIMARY KEY,
+		config_id TEXT NOT NULL REFERENCES config_snapshots (config_id),
+		task_base_sha TEXT NOT NULL,
+		branch TEXT NOT NULL UNIQUE,
+		state TEXT NOT NULL,
+		version INTEGER NOT NULL,
+		resume_state TEXT NOT NULL DEFAULT '',
+		blocked_reason TEXT NOT NULL DEFAULT '',
+		head_sha TEXT NOT NULL DEFAULT '',
+		approved_sha TEXT NOT NULL DEFAULT '',
+		result_sha TEXT NOT NULL DEFAULT '',
+		fix_cycles INTEGER NOT NULL DEFAULT 0 CHECK (fix_cycles >= 0),
+		max_fix_cycles INTEGER NOT NULL CHECK (max_fix_cycles >= 0),
+		conflict_base TEXT NOT NULL DEFAULT '',
+		conflict_failures INTEGER NOT NULL DEFAULT 0 CHECK (conflict_failures >= 0),
+		resolution_approved_sha TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		reason TEXT NOT NULL DEFAULT '',
+		CHECK (state <> 'BLOCKED' OR (resume_state <> '' AND blocked_reason <> ''))
+	);
+	CREATE TABLE task_events (
+		event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		task_id TEXT NOT NULL REFERENCES tasks (task_id),
+		event TEXT NOT NULL,
+		from_state TEXT NOT NULL,
+		to_state TEXT NOT NULL,
+		revision TEXT NOT NULL DEFAULT '',
+		stale INTEGER NOT NULL DEFAULT 0,
+		reason TEXT NOT NULL,
+		at TEXT NOT NULL
+	);
+	CREATE INDEX task_events_by_task ON task_events (task_id, event_id)`},
 }
