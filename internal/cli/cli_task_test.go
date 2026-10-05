@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,5 +177,53 @@ func TestTaskCommandErrors(t *testing.T) {
 	}
 	if output, err := runTask(t, "list", "--help"); err != nil || !strings.Contains(output, "-project") {
 		t.Fatalf("help: %q %v", output, err)
+	}
+}
+
+func TestTaskConfigUpdatePrintsTheChanges(t *testing.T) {
+	server, socket, repo, projectID := taskDaemon(t)
+	t.Chdir(repo)
+	output, err := runTask(t, "new", "fix the parser", "--socket", socket)
+	if err != nil {
+		t.Fatalf("new: %v: %s", err, output)
+	}
+	id := createdID(t, output)
+
+	output, err = runTask(t, "config", "update", id, "--socket", socket)
+	if err != nil || !strings.HasPrefix(output, "task "+id+": configuration unchanged (sha256-") {
+		t.Fatalf("output %q, error %v", output, err)
+	}
+
+	if _, err := server.Tasks.Transition(id, task.Input{Event: task.Assign, Guard: task.Guard{AssignmentAvailable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.Tasks.Transition(id, task.Input{Event: task.Block, Reason: "budget exceeded"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".maestro.toml"), []byte("[budgets]\nmax_turns_per_task = 90\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output, err = runTask(t, "config", "update", "--project", projectID, id, "--socket", socket)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	for _, want := range []string{"task " + id + ": configuration updated", "previous:", "impact:", "ceiling",
+		"state:", "BLOCKED (resumes in PLANNING)", "budgets.max_turns_per_task", "changed"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("update misses %q: %s", want, output)
+		}
+	}
+	output, err = runTask(t, "show", id, "--socket", socket)
+	if err != nil || !strings.Contains(output, "config-update") {
+		t.Fatalf("output %q, error %v", output, err)
+	}
+
+	for _, args := range [][]string{{"config"}, {"config", "show", id}, {"config", "update"}, {"config", "update", "a", "b"}} {
+		if _, err := runTask(t, args...); err == nil || !strings.Contains(err.Error(), "usage: maestro task") {
+			t.Fatalf("args %v: %v", args, err)
+		}
+	}
+	if _, err := runTask(t, "config", "update", "missing", "--socket", socket); err == nil || !strings.Contains(err.Error(), "not_found") {
+		t.Fatalf("unknown task: %v", err)
 	}
 }
