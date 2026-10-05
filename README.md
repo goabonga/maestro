@@ -37,6 +37,13 @@ modified behind your back.
 - **Shows a live dashboard** (`maestro tui`) of the daemon's status and
   capacity, the projects and their tasks with their history.
   [Terminal dashboard](docs/tui.md)
+- **Syncs from your repository** (`maestro sync --from <branch>`): it
+  imports the commit your branch points to, runs the project's configured
+  tests on it, and advances the project's private integration branch only
+  if that commit descends from it. [Syncing from your repository](docs/sync.md)
+- **Publishes the integration** (`maestro publish`): it fast-forwards the
+  `maestro/integration` branch of your repository, never your current
+  branch or worktree. [Publishing the integration](docs/publish.md)
 - **Shows its worktrees** (`maestro worktree list`, `maestro diff`) without
   entering them. [Inspecting worktrees](docs/worktrees.md)
 - **Checks a host** (`maestro agent doctor`): the sandbox it confines
