@@ -10,6 +10,7 @@ import (
 
 	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
+	"github.com/goabonga/maestro/internal/task"
 	"github.com/goabonga/maestro/internal/worktree"
 )
 
@@ -28,6 +29,10 @@ type Server struct {
 
 	// Sessions resolves streamable sessions; nil disables streaming.
 	Sessions SessionSource
+
+	// Tasks stores the tasks of the projects; nil disables the task
+	// routes.
+	Tasks *task.Store
 }
 
 // projectView is the JSON shape of a project.
@@ -50,6 +55,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/daemon/stop", s.stopDaemon)
 	mux.HandleFunc("GET /v1/status", s.status)
 	mux.HandleFunc("GET /v1/sessions/{id}/stream", s.streamSession)
+	s.taskRoutes(mux)
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusNotFound, CodeNotFound, "unknown route: "+r.URL.Path)
 	})
