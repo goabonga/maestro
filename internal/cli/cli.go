@@ -57,6 +57,8 @@ func Run(ctx context.Context, args []string, output io.Writer, version string) e
 		return gc(flags.Args()[1:], output)
 	case "restore":
 		return restore(flags.Args()[1:], output)
+	case "publish":
+		return publish(ctx, flags.Args()[1:], output)
 	case "project":
 		return projectCommand(flags.Args()[1:], output)
 	case "task":
