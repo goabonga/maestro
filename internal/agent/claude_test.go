@@ -91,6 +91,35 @@ func TestClaudeChosenIdentitySurvivesReopenAndRequiresConfirmation(t *testing.T)
 	}
 }
 
+func TestClaudeModeRecordsDoNotSupplyConversationProvenance(t *testing.T) {
+	opts := nativeOptions(t)
+	s, err := OpenClaude(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	id := s.Identity().ID
+	writeClaudeMetadata(t, opts, id)
+	path := filepath.Join(opts.Home, ".claude", "projects", "fixture", id+".jsonl")
+	message, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := []byte(`{"type":"permission-mode","sessionId":"` + id + `","mode":"acceptEdits"}` + "\n")
+	if err := os.WriteFile(path, mode, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConfirmClaude(); err == nil {
+		t.Fatal("mode record alone confirmed an assignment")
+	}
+	if err := os.WriteFile(path, append(mode, message...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConfirmClaude(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClaudeRefusesChangedWorkerAndUnsafeMetadata(t *testing.T) {
 	opts := nativeOptions(t)
 	s, err := OpenClaude(opts)

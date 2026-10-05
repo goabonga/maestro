@@ -108,6 +108,7 @@ func (s *NativeSession) verifyClaude() error {
 		scanner.Buffer(make([]byte, 4096), 1<<20)
 		for scanner.Scan() {
 			var row struct {
+				Type      string `json:"type"`
 				SessionID string `json:"sessionId"`
 				CWD       string `json:"cwd"`
 				Version   string `json:"version"`
@@ -119,8 +120,17 @@ func (s *NativeSession) verifyClaude() error {
 			if row.SessionID == "" {
 				continue
 			}
-			if row.SessionID != s.identity.ID || row.Sidechain || row.CWD != s.identity.WorkDir || row.Version != s.identity.Version {
+			if row.SessionID != s.identity.ID || row.Sidechain {
 				return errors.New("Claude metadata identity mismatch")
+			}
+			// Native mode records precede the first conversation message and
+			// carry an ID but no worktree/version provenance. They are never
+			// sufficient confirmation; continue to a context-bearing record.
+			if row.CWD == "" && row.Version == "" && hasAny(row.Type, "mode", "permission-mode", "atis-latch") {
+				continue
+			}
+			if row.CWD != s.identity.WorkDir || row.Version != s.identity.Version {
+				return errors.New("Claude metadata provenance mismatch")
 			}
 			found = true
 			return nil
