@@ -116,3 +116,25 @@ func TestForRevisionRefusesAnotherSHA(t *testing.T) {
 		t.Fatalf("not a document: %v", err)
 	}
 }
+
+func TestForTaskRefusesReportsOfAnotherConfiguration(t *testing.T) {
+	documents, err := sampleRun().Documents(identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload, err := ForTask(documents[0], "task-1", "config-1", tested); err != nil || payload.Name != "lint" {
+		t.Fatalf("payload=%+v err=%v", payload, err)
+	}
+	if _, err := ForTask(documents[0], "task-1", "config-2", tested); !errors.Is(err, handoff.ErrConfig) {
+		t.Fatalf("old configuration: %v", err)
+	}
+	if _, err := ForTask(documents[0], "task-2", "config-1", tested); !errors.Is(err, handoff.ErrInvalid) {
+		t.Fatalf("other task: %v", err)
+	}
+	if _, err := ForTask(documents[0], "task-1", "config-1", other); !errors.Is(err, ErrRevision) {
+		t.Fatalf("other revision: %v", err)
+	}
+	if _, err := ForTask([]byte("{}"), "task-1", "config-1", tested); !errors.Is(err, handoff.ErrInvalid) {
+		t.Fatalf("not a document: %v", err)
+	}
+}

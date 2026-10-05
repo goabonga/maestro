@@ -119,6 +119,22 @@ func ForRevision(document []byte, revision string) (handoff.TestReportPayload, e
 	return payload, nil
 }
 
+// ForTask decodes a TEST_REPORT document and returns its payload only
+// when it belongs to the task taskID, was produced under the snapshot
+// configID the task runs on now, and tested revision exactly: a report
+// produced before the task adopted another snapshot fails with
+// handoff.ErrConfig.
+func ForTask(document []byte, taskID, configID, revision string) (handoff.TestReportPayload, error) {
+	envelope, _, err := handoff.Decode(document)
+	if err != nil {
+		return handoff.TestReportPayload{}, err
+	}
+	if err := envelope.ForTask(taskID, configID); err != nil {
+		return handoff.TestReportPayload{}, err
+	}
+	return ForRevision(document, revision)
+}
+
 // Passed reports a test report whose command exited 0 in time without
 // changing the tracked files or the index.
 func Passed(payload handoff.TestReportPayload) bool {
