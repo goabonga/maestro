@@ -101,6 +101,8 @@ func TestLoadRefusesInvalidConfigurations(t *testing.T) {
 		"missing command":    "[mcp.github]\nscope = \"shared\"\n",
 		"bad duration":       "[budgets]\nturn_timeout = \"soon\"\n",
 		"zero turns":         "[budgets]\nmax_turns_per_task = 0\n",
+		"zero wall timeout":  "[budgets]\nwall_timeout = \"0s\"\n",
+		"bad wall timeout":   "[budgets]\nwall_timeout = \"later\"\n",
 		"negative agent cap": "[agents.coder]\nmax_turns_per_task = -1\n",
 		"bad agent name":     "[agents.Coder]\ndriver = \"x\"\n",
 		"zero agent timeout": "[agents.coder]\nturn_timeout = \"0s\"\n",
@@ -148,5 +150,22 @@ argv = ["go", "test", "-short", "./..."]
 	}
 	if lint := config.Tests["lint"]; strings.Join(lint.Argv, " ") != "make lint" || lint.Timeout != nil {
 		t.Fatalf("lint %+v", lint)
+	}
+}
+
+func TestLoadReadsTheOptionalWallTimeout(t *testing.T) {
+	config, err := Load(project(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Budgets.WallTimeout != nil {
+		t.Fatalf("wall_timeout is set by default: %v", config.Budgets.WallTimeout)
+	}
+	config, err = Load(project(t, map[string]string{ProjectFile: "[budgets]\nwall_timeout = \"8h\"\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Budgets.WallTimeout == nil || config.Budgets.WallTimeout.Duration != 8*time.Hour {
+		t.Fatalf("wall_timeout %v", config.Budgets.WallTimeout)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goabonga/maestro/internal/state"
 )
@@ -168,5 +169,24 @@ func TestSnapshotFreezesTestCommands(t *testing.T) {
 	}
 	if other, _, _ := changed.Encode(); other == id {
 		t.Fatal("a test command change kept the same config_id")
+	}
+}
+
+func TestUnsetWallTimeoutKeepsTheEncoding(t *testing.T) {
+	snapshot := Snapshot{Config: Defaults(), Instructions: map[string]string{}}
+	id, document, err := snapshot.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(document), "wall_timeout") {
+		t.Fatalf("an unset wall_timeout is encoded: %s", document)
+	}
+	snapshot.Config.Budgets.WallTimeout = &Duration{time.Hour}
+	other, document, err := snapshot.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other == id || !strings.Contains(string(document), `"wall_timeout":"1h0m0s"`) {
+		t.Fatalf("a set wall_timeout is not part of the snapshot: %s", document)
 	}
 }
