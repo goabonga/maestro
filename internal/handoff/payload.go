@@ -44,13 +44,28 @@ type ReviewPayload struct {
 	DiffDigest string `json:"diff_digest"`
 }
 
-// TestReportPayload is produced by Maestro for one tested revision.
+// TestReportPayload is produced by Maestro for one test command run on
+// one tested revision.
 type TestReportPayload struct {
 	TestedSHA   string            `json:"tested_sha"`
 	Argv        []string          `json:"argv"`
 	Environment map[string]string `json:"environment"`
 	ExitCode    int               `json:"exit_code"`
 	Log         string            `json:"log"`
+	// Name is the configured name of the command.
+	Name string `json:"name,omitempty"`
+	// DurationMS is the wall-clock duration of the run, in milliseconds.
+	DurationMS int64 `json:"duration_ms,omitempty"`
+	// TimedOut reports a run stopped by its timeout.
+	TimedOut bool `json:"timed_out,omitempty"`
+	// LogTruncated reports a log cut to its bound.
+	LogTruncated bool `json:"log_truncated,omitempty"`
+	// ChangedPaths are the tracked paths or index entries the run
+	// changed; any entry invalidates the report.
+	ChangedPaths []string `json:"changed_paths,omitempty"`
+	// UntrackedPaths are the files the run left outside version
+	// control, such as build outputs.
+	UntrackedPaths []string `json:"untracked_paths,omitempty"`
 }
 
 // FixRequestPayload is produced by Maestro: what to fix, on which
@@ -148,6 +163,12 @@ func decodePayload(kind Kind, raw json.RawMessage) (any, error) {
 		}
 		if !objectID.MatchString(payload.TestedSHA) || len(payload.Argv) == 0 {
 			return nil, invalid("a test report needs the tested SHA and its argv")
+		}
+		if payload.Name != "" && !identifier.MatchString(payload.Name) {
+			return nil, invalid("test name %q is not a valid identifier", payload.Name)
+		}
+		if payload.DurationMS < 0 {
+			return nil, invalid("a test duration cannot be negative")
 		}
 		return payload, nil
 	case FixRequest:
