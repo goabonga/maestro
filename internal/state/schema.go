@@ -109,4 +109,7 @@ var Migrations = []Migration{
 		updated_at TEXT NOT NULL,
 		CHECK (open_step = '' OR (open_since <> '' AND open_mark <> ''))
 	)`},
+	{Version: 7, SQL: `ALTER TABLE tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE tasks ADD COLUMN description TEXT NOT NULL DEFAULT '';
+	CREATE INDEX tasks_by_project ON tasks (project_id, created_at)`},
 }
