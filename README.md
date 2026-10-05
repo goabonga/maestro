@@ -55,11 +55,13 @@ modified behind your back.
 ## Build
 
 ```console
-$ go build -o maestro ./cmd/cli
-$ go build -o maestro-svc ./cmd/svc
-$ ./maestro daemon start --binary ./maestro-svc
-$ ./maestro agent doctor
+$ make build
+$ ./bin/maestro daemon start
+$ ./bin/maestro agent doctor
 ```
+
+`make build` writes `bin/maestro` and `bin/maestro-svc`; `maestro daemon
+start` finds the daemon next to the client.
 
 ## Documentation
 
