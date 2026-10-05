@@ -184,3 +184,37 @@ func TestTasksCarryTheirProjectAndDescription(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTaskConfigUpdatesReferenceTheirEventAndSnapshots(t *testing.T) {
+	db := openDB(t)
+	if err := db.Migrate(Migrations); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"sha256-x", "sha256-y"} {
+		if _, err := db.Exec("INSERT INTO config_snapshots (config_id, created_at, document) VALUES (?, 'now', '{}')", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec("INSERT INTO tasks (task_id, config_id, task_base_sha, branch, state, version, max_fix_cycles, created_at, updated_at) VALUES ('t1', 'sha256-x', 'b', 'maestro/task-t1', 'NEW', 1, 3, 'now', 'now')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO task_events (event_id, task_id, event, from_state, to_state, reason, at) VALUES (1, 't1', 'config-update', 'NEW', 'NEW', '', 'now')"); err != nil {
+		t.Fatal(err)
+	}
+	insert := "INSERT INTO task_config_updates (event_id, task_id, old_config_id, new_config_id, impact, changes) VALUES (?, 't1', ?, ?, 'objective', '[]')"
+	if _, err := db.Exec(insert, 2, "sha256-x", "sha256-y"); err == nil {
+		t.Fatal("an update without its task event was accepted")
+	}
+	if _, err := db.Exec(insert, 1, "sha256-x", "sha256-missing"); err == nil {
+		t.Fatal("an update to an unknown snapshot was accepted")
+	}
+	if _, err := db.Exec(insert, 1, "sha256-x", "sha256-x"); err == nil {
+		t.Fatal("an update to the same snapshot was accepted")
+	}
+	if _, err := db.Exec(insert, 1, "sha256-x", "sha256-y"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(insert, 1, "sha256-x", "sha256-y"); err == nil {
+		t.Fatal("a second update for the same event was accepted")
+	}
+}
