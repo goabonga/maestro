@@ -75,7 +75,18 @@ func Run(ctx context.Context, socket, session string, term Terminal) (err error)
 	sendResize()
 
 	detached := make(chan struct{})
-	go relayInput(term.In, connection, detached)
+	done := make(chan struct{})
+	relayed := make(chan struct{})
+	go func() {
+		defer close(relayed)
+		relayInput(term.In, connection, detached, done)
+	}()
+	// The relay stops before the terminal is restored, so nothing reads
+	// the terminal once Run returns.
+	defer func() {
+		close(done)
+		<-relayed
+	}()
 	if term.Winch != nil {
 		stop := make(chan struct{})
 		defer close(stop)
@@ -121,10 +132,14 @@ func Run(ctx context.Context, socket, session string, term Terminal) (err error)
 }
 
 // relayInput forwards keystrokes as input frames until Ctrl-], which
-// sends a detach frame instead.
-func relayInput(in io.Reader, connection net.Conn, detached chan<- struct{}) {
+// sends a detach frame instead, or until done is closed.
+func relayInput(in *os.File, connection net.Conn, detached chan<- struct{}, done <-chan struct{}) {
+	fd := int(in.Fd())
 	buffer := make([]byte, 4096)
 	for {
+		if ready, err := waitReadable(fd, done); err != nil || !ready {
+			return
+		}
 		n, err := in.Read(buffer)
 		if n > 0 {
 			chunk := buffer[:n]
