@@ -61,6 +61,8 @@ func Run(ctx context.Context, args []string, output io.Writer, version string) e
 		return projectCommand(flags.Args()[1:], output)
 	case "task":
 		return taskCommand(ctx, flags.Args()[1:], output)
+	case "sync":
+		return syncCommand(ctx, flags.Args()[1:], output)
 	case "worktree":
 		return worktreeCommand(flags.Args()[1:], output)
 	case "diff":
