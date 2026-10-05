@@ -118,18 +118,20 @@ func TestTransitionTablePerType(t *testing.T) {
 func TestPrepareRefusesIncompleteInputs(t *testing.T) {
 	store := openJournal(t)
 	cases := map[string]func(*Operation){
-		"unknown type":            func(op *Operation) { op.Type = "MERGE" },
-		"no project":              func(op *Operation) { op.ProjectID = "" },
-		"no worker":               func(op *Operation) { op.WorkerID = "" },
-		"bad base":                func(op *Operation) { op.IntegrationBaseSHA = "main" },
-		"bad source commit":       func(op *Operation) { op.SourceCommits = []string{"HEAD", shaHead} },
-		"chain not at head":       func(op *Operation) { op.SourceCommits = []string{shaHead, shaTask} },
-		"no task":                 func(op *Operation) { op.TaskID = "" },
-		"no metadata":             func(op *Operation) { op.CommitMetadata = nil },
-		"empty message":           func(op *Operation) { op.CommitMetadata.Message = "\n\n" },
-		"name with crud":          func(op *Operation) { op.CommitMetadata.Author.Name = "Ada " },
-		"email with brackets":     func(op *Operation) { op.CommitMetadata.Committer.Email = "a<b>@c" },
-		"sub-second date":         func(op *Operation) { op.CommitMetadata.Author.When = op.CommitMetadata.Author.When.Add(time.Millisecond) },
+		"unknown type":        func(op *Operation) { op.Type = "MERGE" },
+		"no project":          func(op *Operation) { op.ProjectID = "" },
+		"no worker":           func(op *Operation) { op.WorkerID = "" },
+		"bad base":            func(op *Operation) { op.IntegrationBaseSHA = "main" },
+		"bad source commit":   func(op *Operation) { op.SourceCommits = []string{"HEAD", shaHead} },
+		"chain not at head":   func(op *Operation) { op.SourceCommits = []string{shaHead, shaTask} },
+		"no task":             func(op *Operation) { op.TaskID = "" },
+		"no metadata":         func(op *Operation) { op.CommitMetadata = nil },
+		"empty message":       func(op *Operation) { op.CommitMetadata.Message = "\n\n" },
+		"name with crud":      func(op *Operation) { op.CommitMetadata.Author.Name = "Ada " },
+		"email with brackets": func(op *Operation) { op.CommitMetadata.Committer.Email = "a<b>@c" },
+		"sub-second date": func(op *Operation) {
+			op.CommitMetadata.Author.When = op.CommitMetadata.Author.When.Add(time.Millisecond)
+		},
 		"result set in advance":   func(op *Operation) { op.ResultSHA = shaResult },
 		"state set in advance":    func(op *Operation) { op.State = Committed },
 		"bad superseded id":       func(op *Operation) { op.SupersedesOperationID = "previous" },
