@@ -31,4 +31,30 @@ var Migrations = []Migration{
 		created_at TEXT NOT NULL,
 		document BLOB NOT NULL
 	)`},
+	{Version: 4, SQL: `CREATE TABLE turns (
+		turn_id TEXT PRIMARY KEY,
+		attempt_id TEXT NOT NULL UNIQUE,
+		task_id TEXT NOT NULL,
+		agent TEXT NOT NULL,
+		config_id TEXT NOT NULL REFERENCES config_snapshots (config_id),
+		previous_turn_id TEXT UNIQUE REFERENCES turns (turn_id),
+		state TEXT NOT NULL,
+		turn_timeout_ns INTEGER NOT NULL,
+		input_wait_timeout_ns INTEGER NOT NULL,
+		created_at TEXT NOT NULL,
+		admitted_at TEXT,
+		waiting_since TEXT,
+		updated_at TEXT NOT NULL,
+		reason TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX turns_by_task ON turns (task_id);
+	CREATE TABLE turn_events (
+		event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		turn_id TEXT NOT NULL REFERENCES turns (turn_id),
+		from_state TEXT NOT NULL,
+		to_state TEXT NOT NULL,
+		reason TEXT NOT NULL,
+		at TEXT NOT NULL
+	);
+	CREATE INDEX turn_events_by_turn ON turn_events (turn_id, event_id)`},
 }
