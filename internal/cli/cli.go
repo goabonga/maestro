@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -64,6 +65,8 @@ func Run(ctx context.Context, args []string, output io.Writer, version string) e
 		return worktreeCommand(flags.Args()[1:], output)
 	case "diff":
 		return diff(flags.Args()[1:], output)
+	case "tui":
+		return tuiCommand(ctx, flags.Args()[1:], os.Stdin, output)
 	default:
 		return fmt.Errorf("unknown command: %s", flags.Arg(0))
 	}
