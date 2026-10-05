@@ -42,6 +42,12 @@ func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(m.styles.title.Render("maestro · "+m.heading()) + "\n\n")
 	switch {
+	case m.noticeErr != nil:
+		b.WriteString(m.styles.err.Render(printable(m.noticeErr.Error())) + "\n\n")
+	case m.notice != "":
+		b.WriteString(printable(m.notice) + "\n\n")
+	}
+	switch {
 	case m.err != nil:
 		b.WriteString(m.styles.err.Render(m.err.Error()) + "\n")
 		fmt.Fprintf(&b, "retrying every %s\n", m.interval)
@@ -61,6 +67,9 @@ func (m Model) View() string {
 				m.viewDetail(&b)
 			}
 		}
+	}
+	if m.prompting {
+		b.WriteString("\nattach to session: " + m.input + "▏\n")
 	}
 	b.WriteString("\n" + m.styles.help.Render(m.help()) + "\n")
 	if m.width > 0 {
@@ -82,13 +91,16 @@ func (m Model) heading() string {
 
 // help lists the keys of the current screen.
 func (m Model) help() string {
+	if m.prompting {
+		return "enter attach · esc cancel · Ctrl-] detaches once attached"
+	}
 	switch m.screen {
 	case tasksScreen:
-		return "↑/↓ select · enter show · esc back · r refresh · q quit"
+		return "↑/↓ select · enter show · esc back · a attach · r refresh · q quit"
 	case detailScreen:
-		return "esc back · r refresh · q quit"
+		return "esc back · a attach · r refresh · q quit"
 	}
-	return "↑/↓ select · enter tasks · r refresh · q quit"
+	return "↑/↓ select · enter tasks · a attach · r refresh · q quit"
 }
 
 // table renders rows aligned in columns, with a styled header and the
