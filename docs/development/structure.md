@@ -17,7 +17,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/ipc/` | The daemon's versioned JSON API: envelope, bounded bodies, persisted idempotency keys. |
 | `internal/scheduler/` | Global capacity: atomic slot reservations for sessions, test runs and commands. |
 | `internal/launcher/` | Execution confinement: Bubblewrap namespaces, inherited limits, supervised groups. |
-| `internal/session/` | Persistent PTY sessions: bounded output, resize, stop, exit reconciliation. |
+| `internal/session/` | Persistent PTY sessions: bounded output, resize, stop, exit reconciliation, permissions epochs. |
 | `internal/fixture/` | PTY fixtures: record a session, strip secrets, replay it with expected outcomes. |
 | `internal/agent/` | Versioned driver registry and the host doctor: which agent versions may be driven. |
 | `internal/handoff/` | Handoff contracts: the versioned envelope, typed payloads, and their checks against the assignment and Git. |
@@ -133,7 +133,10 @@ bounded ring (1 MiB by default) while counting everything it ever saw,
 propagates terminal resizes to the PTY, and reconciles its state when
 the process exits on its own — phase, exit code, output totals. An
 explicit stop signals the group and returns only once the leader is
-reaped, which tears the group's PID namespace down; writes and resizes
+reaped, including a repeated stop while termination is still in progress.
+The master uses pollable I/O so closing it releases a stalled input writer;
+resizes preserve that mode. Reaping tears the group's PID namespace down;
+writes and resizes
 on a finished session are refused, and stopping it again is a no-op.
 
 Live output reaches clients through bounded subscriptions: the PTY
@@ -161,6 +164,65 @@ leaves on `Ctrl-]` with a detach frame. The previous terminal settings
 are restored by a deferred call on every exit path — detach, session
 end, connection error. The daemon does not create sessions yet; the
 command is exercised against fixture sessions in the tests.
+
+## Permissions epochs
+
+`session.NewProfile` freezes a permissions epoch, role, source revision,
+PTY configuration, Git metadata directory and optional handoff directory.
+The profile owns its slices and environment map; changing an input or an
+exported copy cannot change its mounts. Paths are resolved before admission,
+and overlapping writable/protected mounts are refused, including symlink
+aliases. The caller supplies the actual Git metadata path, rather than a
+`.git` path reconstructed from a worktree name, and materializes the revision
+it declares before constructing the profile.
+
+Coding grants source and Git writes while extra instruction mounts remain
+read-only. Review protects both sources and Git. Repair protects them too
+and requires its own handoff directory: that directory alone is writable
+inside the source tree. Explicit private state and cache mounts may remain
+writable outside the protected paths. Nested protections are mounted after
+the working directory so that its bind cannot hide them.
+
+`session.StartEpoch` starts a confined PTY for a validated profile. Session
+startup waits for a private FIFO acknowledgement from a fixed Maestro
+wrapper running inside the sandbox, after mount and limit setup and before
+exec of the agent. Bubblewrap's child-PID report arrives too early to prove
+mount setup; application text is not proof either. Failure or a five-second
+confirmation timeout
+refuses admission and stops the group. The epoch is `active` only after this
+confirmation; driver readiness and revision verification remain the caller's
+responsibility.
+
+`Epoch.End(reason, grace, reconcile)` permanently fences input to the old
+PTY, including clients retaining its pointer, then stops and reaps the whole
+PID namespace. Only then does the required reconciler inspect stable Git and
+handoffs and persist its proofs. Success changes the epoch to `revoked` and
+authorizes release of the assignment; a failed stop or reconciliation leaves
+it `blocked`, with the error exposed in its state. An unreconciled boundary
+can be retried, but a successful boundary does not repeat its callback.
+Callbacks may inspect state, but must not recursively request another epoch
+transition. Completion, interruption, pause, role change and human detach
+use this same barrier. A reconciler that sees human code changes must
+invalidate the corresponding test and review proofs before returning.
+
+Bubblewrap does not change mounts in place here: the implementation always
+uses the stop-and-recreate strategy. `Epoch.ConfirmNativeID` binds the exact
+conversation ID that a driver has chosen or observed; it refuses rebinding.
+After a successful boundary, `Epoch.Restart` requires a strictly newer
+profile and a driver that constructs the resume argv from that confirmed ID.
+An absent ID, a driver error, stale epoch or an invalid replacement cannot
+start a new conversation implicitly. A replacement gets a new PTY and must
+confirm its sandbox again; the old PTY stays fenced. Live-output clients
+subscribe to the new PTY explicitly.
+
+These are session primitives, exercised with confined fixture processes.
+The daemon does not yet wire worker assignments, native agent ID discovery,
+Git/handoff persistence or human-pilot ownership into them. A caller must
+supply the reconciler and the exact-ID resume driver; there is no default
+no-op reconciler or latest-session fallback. Tests prove descendant writes
+cease before reconciliation, read-only review/repair, writable private state
+and handoffs, immutable instructions, refusal of changed mounts and failure
+paths, with the race detector.
 
 ## PTY fixtures
 

@@ -12,11 +12,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 
 	"github.com/goabonga/maestro/internal/launcher"
 )
@@ -56,20 +58,41 @@ type State struct {
 
 // Session is one live or finished PTY session.
 type Session struct {
-	mu          sync.Mutex
-	master      *os.File
-	pid         int
-	output      *ring
-	phase       string
-	exit        int
-	done        chan struct{}
-	stopped     bool
-	subscribers map[chan []byte]func()
+	mu           sync.Mutex
+	master       *os.File
+	pid          int
+	output       *ring
+	phase        string
+	exit         int
+	done         chan struct{}
+	inputBlocked bool
+	subscribers  map[chan []byte]func()
 }
 
 // Start launches the confined command on a fresh PTY.
 func Start(l *launcher.Launcher, config Config) (*Session, error) {
-	command, err := l.Command(config.Spec)
+	readinessDir, err := os.MkdirTemp("", "maestro-profile-ready-")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(readinessDir) }()
+	readinessPath := filepath.Join(readinessDir, "ready")
+	if err := syscall.Mkfifo(readinessPath, 0o600); err != nil {
+		return nil, err
+	}
+	// O_RDWR avoids blocking open before the confined writer exists. Nonblock
+	// makes the FIFO pollable by Go, so a failed mount has a bounded deadline.
+	readinessRoot, err := os.OpenRoot(readinessDir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = readinessRoot.Close() }()
+	readyFile, err := readinessRoot.OpenFile("ready", os.O_RDWR|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = readyFile.Close() }()
+	command, err := l.CommandReady(config.Spec, readinessPath)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +105,14 @@ func Start(l *launcher.Launcher, config Config) (*Session, error) {
 	}
 	master, err := pty.StartWithSize(command, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {
+		return nil, err
+	}
+	// PTY files from creack/pty start in blocking mode. Reopen a CLOEXEC
+	// duplicate as pollable so Close can interrupt a stalled writer or reader.
+	master, err = pollableMaster(master)
+	if err != nil {
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		_ = command.Wait()
 		return nil, err
 	}
 	buffer := config.BufferBytes
@@ -128,6 +159,18 @@ func Start(l *launcher.Launcher, config Config) (*Session, error) {
 		session.mu.Unlock()
 		close(session.done)
 	}()
+	// Bubblewrap's child PID report precedes mount setup. Only this fixed
+	// wrapper's private FIFO acknowledgement, emitted before exec of the agent,
+	// confirms that mounts and limits are installed. PTY output is not proof.
+	if err := readyFile.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		_ = session.Stop(100 * time.Millisecond)
+		return nil, fmt.Errorf("bound sandbox confirmation: %w", err)
+	}
+	byteRead := make([]byte, 1)
+	if n, err := readyFile.Read(byteRead); err != nil || n != 1 || byteRead[0] != 'R' {
+		stopErr := session.Stop(100 * time.Millisecond)
+		return nil, fmt.Errorf("confirm sandbox profile: %w", errors.Join(err, stopErr, errors.New("missing mount acknowledgement")))
+	}
 	return session, nil
 }
 
@@ -198,11 +241,28 @@ func (s *Session) closeSubscribers() {
 // Write sends input to the session's terminal.
 func (s *Session) Write(p []byte) (int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.phase != Running {
-		return 0, fmt.Errorf("the session is %s", s.phase)
+	if s.inputBlocked {
+		s.mu.Unlock()
+		return 0, errors.New("session input is fenced at a permissions boundary")
 	}
-	return s.master.Write(p)
+	if s.phase != Running {
+		phase := s.phase
+		s.mu.Unlock()
+		return 0, fmt.Errorf("the session is %s", phase)
+	}
+	master := s.master
+	s.mu.Unlock()
+	// Admission is serialized with BlockInput, not the potentially blocking
+	// I/O. Stop must be able to close the PTY even when the agent stops reading.
+	return master.Write(p)
+}
+
+// BlockInput permanently closes admission to this PTY. It also fences
+// clients retaining a session pointer across a permissions boundary.
+func (s *Session) BlockInput() {
+	s.mu.Lock()
+	s.inputBlocked = true
+	s.mu.Unlock()
 }
 
 // Resize propagates a new terminal size to the PTY.
@@ -212,7 +272,15 @@ func (s *Session) Resize(rows, cols uint16) error {
 	if s.phase != Running {
 		return fmt.Errorf("the session is %s", s.phase)
 	}
-	return pty.Setsize(s.master, &pty.Winsize{Rows: rows, Cols: cols})
+	connection, err := s.master.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var resizeErr error
+	err = connection.Control(func(fd uintptr) {
+		resizeErr = unix.IoctlSetWinsize(int(fd), unix.TIOCSWINSZ, &unix.Winsize{Row: rows, Col: cols})
+	})
+	return errors.Join(err, resizeErr)
 }
 
 // Output returns the kept output and the total bytes ever produced.
@@ -238,10 +306,13 @@ func (s *Session) Wait() {
 // group's PID namespace dies with it, so no descendant survives.
 func (s *Session) Stop(grace time.Duration) error {
 	s.mu.Lock()
-	if s.phase != Running {
+	select {
+	case <-s.done:
 		s.mu.Unlock()
 		return nil
+	default:
 	}
+	s.inputBlocked = true
 	s.phase = Stopped
 	pid := s.pid
 	s.mu.Unlock()
@@ -259,6 +330,22 @@ func (s *Session) Stop(grace time.Duration) error {
 	case <-time.After(10 * time.Second):
 		return errors.New("the session group did not die after SIGKILL")
 	}
+}
+
+// pollableMaster transfers ownership to a descriptor registered with Go's
+// poller. Fd must not be called on the resulting file: it restores blocking
+// mode; Resize uses SyscallConn instead.
+func pollableMaster(master *os.File) (*os.File, error) {
+	duplicate, err := unix.FcntlInt(master.Fd(), unix.F_DUPFD_CLOEXEC, 0)
+	_ = master.Close()
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.SetNonblock(duplicate, true); err != nil {
+		_ = unix.Close(duplicate)
+		return nil, err
+	}
+	return os.NewFile(uintptr(duplicate), "maestro-pty"), nil
 }
 
 // exitCode extracts a process exit code from a wait error.
