@@ -173,9 +173,12 @@ func TestRingKeepsOnlyTheNewestBytes(t *testing.T) {
 }
 
 func TestSubscribersReceiveLiveOutputAndCloseOnExit(t *testing.T) {
-	session := start(t, Config{Spec: launcher.Spec{Argv: []string{"/bin/sh", "-c", "echo streamed; sleep 0.2"}, Dir: t.TempDir()}})
+	session := start(t, Config{Spec: launcher.Spec{Argv: []string{"/bin/sh", "-c", "read line; echo streamed"}, Dir: t.TempDir()}})
 	live, cancel := session.Subscribe(16)
 	defer cancel()
+	if _, err := session.Write([]byte("emit\n")); err != nil {
+		t.Fatal(err)
+	}
 	var collected bytes.Buffer
 	for chunk := range live {
 		collected.Write(chunk)
@@ -189,6 +192,17 @@ func TestSubscribersReceiveLiveOutputAndCloseOnExit(t *testing.T) {
 		t.Fatal("nil channel")
 	} else if _, open := <-late; open {
 		t.Fatal("a subscription on a finished session stayed open")
+	}
+}
+
+func TestWaitPreservesOutputFromShortLivedProcesses(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		live := start(t, Config{Spec: launcher.Spec{Argv: []string{"/bin/sh", "-c", "head -c 65536 /dev/zero | tr '\\000' x; echo END"}, Dir: t.TempDir()}})
+		live.Wait()
+		output, total := live.Output()
+		if len(output) != 65541 || total != 65541 || !bytes.HasSuffix(output, []byte("END\r\n")) {
+			t.Fatalf("final output lost: bytes=%d total=%d", len(output), total)
+		}
 	}
 }
 
