@@ -345,6 +345,7 @@ SIGINT or SIGTERM after draining requests.
 | --- | --- |
 | `make check` | Everything below, plus release validation |
 | `make go-test` | Unit tests of `cmd/` and `internal/` with `go test -race` |
+| `make build` | Builds `bin/maestro` and `bin/maestro-svc` |
 | `make go-check` | `make go-test`, then `go vet`, build and gosec on `cmd/` and `internal/` |
 | `make scripts-check` | Byte-compilation and pytest for `scripts/` |
 | `make license-check` | SPDX headers on Go, Python, TOML and YAML files |
