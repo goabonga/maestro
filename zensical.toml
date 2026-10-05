@@ -10,6 +10,7 @@ repo_url = "https://github.com/goabonga/maestro"
 repo_name = "goabonga/maestro"
 nav = [
     { "Introduction" = "index.md" },
+    { "Command reference" = "cli.md" },
     { "Project initialization" = "initialization.md" },
     { "Inspecting worktrees" = "worktrees.md" },
     { "Running the daemon" = "daemon.md" },

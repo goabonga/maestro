@@ -70,9 +70,13 @@ $ ./bin/maestro agent doctor
 `make build` writes `bin/maestro` and `bin/maestro-svc`; `maestro daemon
 start` finds the daemon next to the client.
 
+`./bin/maestro help` lists every command; `./bin/maestro help <command>`
+describes one.
+
 ## Documentation
 
-The [documentation](docs/index.md) covers every command above; the
+The [command reference](docs/cli.md) lists every command, and the
+[documentation](docs/index.md) covers each of them; the
 [development pages](docs/development/structure.md) describe the
 architecture, the checks and the release process.
 
