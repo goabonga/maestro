@@ -27,7 +27,7 @@ import (
 
 // taskUsage lists the task subcommands.
 const taskUsage = `usage: maestro task new "<description>" | show <id> | list | cancel <id> | resume <id>
-       [--project <id>] [--socket <path>]`
+       | config update <id> [--project <id>] [--socket <path>]`
 
 // maxResponse bounds a daemon response read by the CLI.
 const maxResponse = 4 << 20
@@ -67,21 +67,28 @@ func taskCommand(ctx context.Context, args []string, output io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(taskUsage)
 	}
-	flags := flag.NewFlagSet("maestro task "+args[0], flag.ContinueOnError)
+	command, rest := args[0], args[1:]
+	if command == "config" {
+		if len(rest) == 0 || rest[0] != "update" {
+			return errors.New(taskUsage)
+		}
+		command, rest = "config update", rest[1:]
+	}
+	flags := flag.NewFlagSet("maestro task "+command, flag.ContinueOnError)
 	flags.SetOutput(output)
 	socket := flags.String("socket", transport.DefaultSocket(), "daemon Unix socket path")
 	projectID := flags.String("project", "", "project id (default: the project of the current repository)")
-	positionals, err := parseInterleaved(flags, args[1:])
+	positionals, err := parseInterleaved(flags, rest)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
 	}
-	arity := map[string]int{"new": 1, "show": 1, "list": 0, "cancel": 1, "resume": 1}
-	want, known := arity[args[0]]
+	arity := map[string]int{"new": 1, "show": 1, "list": 0, "cancel": 1, "resume": 1, "config update": 1}
+	want, known := arity[command]
 	if !known {
-		return fmt.Errorf("unknown task command: %s", args[0])
+		return fmt.Errorf("unknown task command: %s", command)
 	}
 	if len(positionals) != want {
 		return errors.New(taskUsage)
@@ -91,7 +98,7 @@ func taskCommand(ctx context.Context, args []string, output io.Writer) error {
 		return err
 	}
 	client := daemonClient{socket: *socket}
-	switch args[0] {
+	switch command {
 	case "new":
 		return taskNew(ctx, client, project, positionals[0], output)
 	case "show":
@@ -100,6 +107,8 @@ func taskCommand(ctx context.Context, args []string, output io.Writer) error {
 		return taskList(ctx, client, project, output)
 	case "cancel":
 		return taskTransition(ctx, client, project, positionals[0], "cancel", output)
+	case "config update":
+		return taskConfigUpdate(ctx, client, project, positionals[0], output)
 	default:
 		return taskTransition(ctx, client, project, positionals[0], "resume", output)
 	}
@@ -294,6 +303,56 @@ func taskTransition(ctx context.Context, client daemonClient, project, id, actio
 	}
 	_, err := fmt.Fprintf(output, "task %s: %s\n", t.ID, t.State)
 	return err
+}
+
+// configUpdateDocument is a configuration update as the daemon reports
+// it.
+type configUpdateDocument struct {
+	Task     taskDocument `json:"task"`
+	Previous string       `json:"previous_config_id"`
+	ConfigID string       `json:"config_id"`
+	Updated  bool         `json:"updated"`
+	Impact   string       `json:"impact"`
+	Changes  []struct {
+		Key    string `json:"key"`
+		Kind   string `json:"kind"`
+		Impact string `json:"impact"`
+	} `json:"changes"`
+}
+
+// taskConfigUpdate asks the daemon to snapshot the project's current
+// configuration and instruction files and make the task adopt them,
+// then prints the changes and where the task continues.
+func taskConfigUpdate(ctx context.Context, client daemonClient, project, id string, output io.Writer) error {
+	var update configUpdateDocument
+	path := "/v1/tasks/" + url.PathEscape(id) + "/config"
+	if err := client.call(ctx, http.MethodPost, path, map[string]string{"project_id": project}, &update); err != nil {
+		return err
+	}
+	if !update.Updated {
+		_, err := fmt.Fprintf(output, "task %s: configuration unchanged (%s)\n", update.Task.ID, update.ConfigID)
+		return err
+	}
+	table := tabwriter.NewWriter(output, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(table, "task %s: configuration updated\n", update.Task.ID)
+	fmt.Fprintf(table, "previous:\t%s\n", update.Previous)
+	fmt.Fprintf(table, "config:\t%s\n", update.ConfigID)
+	fmt.Fprintf(table, "impact:\t%s\n", update.Impact)
+	state := update.Task.State
+	if update.Task.ResumeState != "" {
+		state += " (resumes in " + update.Task.ResumeState + ")"
+	}
+	fmt.Fprintf(table, "state:\t%s\n", state)
+	if err := table.Flush(); err != nil {
+		return err
+	}
+	fmt.Fprintln(output)
+	table = tabwriter.NewWriter(output, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(table, "KEY\tCHANGE\tIMPACT")
+	for _, change := range update.Changes {
+		fmt.Fprintf(table, "%s\t%s\t%s\n", change.Key, change.Kind, change.Impact)
+	}
+	return table.Flush()
 }
 
 // summary returns the first line of a description, shortened for a table.
