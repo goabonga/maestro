@@ -18,6 +18,7 @@ import (
 	"github.com/goabonga/maestro/internal/ipc"
 	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
+	"github.com/goabonga/maestro/internal/task"
 	"github.com/goabonga/maestro/internal/transport"
 	"github.com/goabonga/maestro/internal/worktree"
 )
@@ -98,6 +99,9 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
-	server := &ipc.Server{DB: db, Store: store, Service: "maestro-svc", Version: Version, Shutdown: stop, Capacity: capacity}
+	server := &ipc.Server{
+		DB: db, Store: store, Service: "maestro-svc", Version: Version, Shutdown: stop, Capacity: capacity,
+		Tasks: &task.Store{DB: db},
+	}
 	return transport.Serve(ctx, listener, server.Handler())
 }
