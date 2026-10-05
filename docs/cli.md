@@ -45,6 +45,13 @@ Commands that reach the daemon accept `--socket <path>`.
 | `maestro task resume <id>` | Resumes a blocked task at its stored continuation. |
 | `maestro task config update <id>` | Adopts the project's current configuration for a task, explicitly. |
 
+## Workers
+
+| Command | What it does |
+| --- | --- |
+| `maestro worker list` | Lists the project's workers by name: agent, driver, state and current assignment. [Worker registry](development/workers.md) |
+| `maestro worker show <name>` | Shows a worker, its current assignment and its recent events. |
+
 ## Your repository
 
 | Command | What it does |
