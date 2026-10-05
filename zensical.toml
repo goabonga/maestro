@@ -16,7 +16,8 @@ nav = [
     { "Backup, restore and cleanup" = "maintenance.md" },
     { "Checking agents" = "agents.md" },
     { "Managing tasks" = "tasks.md" },
-    { "Development" = [{ "Project structure" = "development/structure.md" }, { "GitHub automation" = "development/github.md" }, { "Driver validation" = "development/validation.md" }, { "Turn lifecycle" = "development/turns.md" }, { "Instruction provisioning" = "development/instructions.md" }, { "MCP translation" = "development/mcp-translation.md" }, { "Runtime path control" = "development/runtime-paths.md" }, { "Task workflow" = "development/tasks.md" }, { "Test runner" = "development/test-runner.md" }, { "Task budgets" = "development/budgets.md" }, { "Task API" = "development/task-api.md" }, { "Configuration update" = "development/config-update.md" }] },
+    { "Terminal dashboard" = "tui.md" },
+    { "Development" = [{ "Project structure" = "development/structure.md" }, { "GitHub automation" = "development/github.md" }, { "Driver validation" = "development/validation.md" }, { "Turn lifecycle" = "development/turns.md" }, { "Instruction provisioning" = "development/instructions.md" }, { "MCP translation" = "development/mcp-translation.md" }, { "Runtime path control" = "development/runtime-paths.md" }, { "Task workflow" = "development/tasks.md" }, { "Test runner" = "development/test-runner.md" }, { "Task budgets" = "development/budgets.md" }, { "Task API" = "development/task-api.md" }, { "Configuration update" = "development/config-update.md" }, { "Operations journal" = "development/operations.md" }, { "Source chain" = "development/source-chain.md" }, { "Terminal dashboard" = "development/tui.md" }] },
     { "Versions" = "versions.md" },
 ]
 
