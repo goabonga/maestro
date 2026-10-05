@@ -132,7 +132,7 @@ func TestRecoverChargesAnUnconfirmedIntervalConservatively(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &clock{at: time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)}
-	created, err := task.Store{DB: db, Now: c.now}.Create(configID, strings.Repeat("0", 40))
+	created, err := task.Store{DB: db, Now: c.now}.Create("project-1", "budget test task", configID, strings.Repeat("0", 40))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestMonotonicReadingsMeasureIntervals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.tasks().Create(configID, strings.Repeat("0", 40))
+	created, err := store.tasks().Create("project-1", "budget test task", configID, strings.Repeat("0", 40))
 	if err != nil {
 		t.Fatal(err)
 	}
