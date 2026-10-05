@@ -184,14 +184,32 @@ func TestAttachPropagatesResizes(t *testing.T) {
 }
 
 func TestAttachRestoresTheTerminalWhenTheSessionEnds(t *testing.T) {
-	socket, _, _, terminal := attachFixture(t, "/bin/sh", "-c", "sleep 0.3; echo goodbye; exit 3")
+	// The session prints only after a line typed through the attach, so
+	// its output cannot be emitted before the attach subscribed to it.
+	socket, _, keyboard, terminal := attachFixture(t, "/bin/sh", "-c", "read line; echo goodbye-$line; exit 3")
 	before := modes(t, terminal)
 	output := &lockedBuffer{}
-	err := attach(context.Background(), socket, "s1", attachIO{in: terminal, out: output})
+	finished := make(chan error, 1)
+	go func() {
+		finished <- attach(context.Background(), socket, "s1", attachIO{in: terminal, out: output})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && modes(t, terminal) == before {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := keyboard.Write([]byte("now\r")); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	select {
+	case err = <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("attach did not return after the session ended")
+	}
 	if err == nil || !strings.Contains(err.Error(), "exited") {
 		t.Fatalf("expected the session end to be reported, got %v", err)
 	}
-	if !strings.Contains(output.String(), "goodbye") {
+	if !strings.Contains(output.String(), "goodbye-now") {
 		t.Fatalf("output %q", output.String())
 	}
 	if modes(t, terminal) != before {
