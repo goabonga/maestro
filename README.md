@@ -34,6 +34,9 @@ modified behind your back.
   configuration and instruction files it was created with, starts from
   the project's integration head on its own branch, and moves only
   through the transitions Maestro allows. [Managing tasks](docs/tasks.md)
+- **Shows a live dashboard** (`maestro tui`) of the daemon's status and
+  capacity, the projects and their tasks with their history.
+  [Terminal dashboard](docs/tui.md)
 - **Shows its worktrees** (`maestro worktree list`, `maestro diff`) without
   entering them. [Inspecting worktrees](docs/worktrees.md)
 - **Checks a host** (`maestro agent doctor`): the sandbox it confines
