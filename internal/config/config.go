@@ -50,6 +50,9 @@ type Budgets struct {
 	TurnTimeout      Duration `toml:"turn_timeout" json:"turn_timeout"`
 	InputWaitTimeout Duration `toml:"input_wait_timeout" json:"input_wait_timeout"`
 	TaskTimeout      Duration `toml:"task_timeout" json:"task_timeout"`
+	// WallTimeout optionally bounds the calendar time of a task, waits
+	// included; nil means no such bound.
+	WallTimeout *Duration `toml:"wall_timeout" json:"wall_timeout,omitempty"`
 }
 
 // Agent configures one named agent. Limits set here apply on top of the
@@ -121,6 +124,9 @@ func (c Config) Validate() error {
 		if value.Duration <= 0 {
 			return invalid("budgets.%s must be positive", key)
 		}
+	}
+	if budgets.WallTimeout != nil && budgets.WallTimeout.Duration <= 0 {
+		return invalid("budgets.wall_timeout must be positive")
 	}
 	for agentName, agent := range c.Agents {
 		if !name.MatchString(agentName) {
