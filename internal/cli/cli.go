@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -25,6 +24,7 @@ import (
 func Run(ctx context.Context, args []string, output io.Writer, version string) error {
 	flags := flag.NewFlagSet("maestro", flag.ContinueOnError)
 	flags.SetOutput(output)
+	flags.Usage = func() { _ = printOverview(output) }
 	showVersion := flags.Bool("version", false, "print version")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -37,43 +37,17 @@ func Run(ctx context.Context, args []string, output io.Writer, version string) e
 		return err
 	}
 	if flags.NArg() == 0 {
-		flags.Usage()
-		return nil
+		return printOverview(output)
 	}
-	switch flags.Arg(0) {
-	case "init":
-		return initProject(flags.Args()[1:], output)
-	case "status":
-		return status(ctx, flags.Args()[1:], output)
-	case "agent":
-		return agentCommand(ctx, flags.Args()[1:], output)
-	case "attach":
-		return attachCommand(ctx, flags.Args()[1:], output)
-	case "backup":
-		return backup(flags.Args()[1:], output)
-	case "daemon":
-		return daemonCommand(ctx, flags.Args()[1:], output)
-	case "gc":
-		return gc(flags.Args()[1:], output)
-	case "restore":
-		return restore(flags.Args()[1:], output)
-	case "publish":
-		return publish(ctx, flags.Args()[1:], output)
-	case "project":
-		return projectCommand(flags.Args()[1:], output)
-	case "task":
-		return taskCommand(ctx, flags.Args()[1:], output)
-	case "sync":
-		return syncCommand(ctx, flags.Args()[1:], output)
-	case "worktree":
-		return worktreeCommand(flags.Args()[1:], output)
-	case "diff":
-		return diff(flags.Args()[1:], output)
-	case "tui":
-		return tuiCommand(ctx, flags.Args()[1:], os.Stdin, output)
-	default:
-		return fmt.Errorf("unknown command: %s", flags.Arg(0))
+	name, rest := flags.Arg(0), flags.Args()[1:]
+	if name == "help" {
+		return help(rest, output)
 	}
+	entry, ok := lookup(name)
+	if !ok {
+		return fmt.Errorf("unknown command: %s (run 'maestro help')", name)
+	}
+	return entry.run(ctx, rest, output)
 }
 
 // initProject registers the repository containing the given path (the
