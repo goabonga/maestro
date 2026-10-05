@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goabonga/maestro/internal/budget"
 	"github.com/goabonga/maestro/internal/config"
 	"github.com/goabonga/maestro/internal/task"
 	"github.com/goabonga/maestro/internal/worktree"
@@ -76,6 +77,7 @@ func (s *Server) taskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/tasks/{id}", s.showTask)
 	mux.HandleFunc("POST /v1/tasks/{id}/cancel", idempotent(s.DB, s.cancelTask))
 	mux.HandleFunc("POST /v1/tasks/{id}/resume", idempotent(s.DB, s.resumeTask))
+	mux.HandleFunc("POST /v1/tasks/{id}/config", idempotent(s.DB, s.updateTaskConfig))
 }
 
 // taskProject resolves the project a task request names, writing the
@@ -286,6 +288,76 @@ func (s *Server) transition(w http.ResponseWriter, r *http.Request, in task.Inpu
 		return
 	}
 	reply(w, r, http.StatusOK, viewTask(next))
+}
+
+// configUpdateView is the JSON shape of a configuration update.
+type configUpdateView struct {
+	Task     taskView        `json:"task"`
+	Previous string          `json:"previous_config_id"`
+	ConfigID string          `json:"config_id"`
+	Updated  bool            `json:"updated"`
+	Impact   config.Impact   `json:"impact,omitempty"`
+	Changes  []config.Change `json:"changes"`
+}
+
+// updateTaskConfig makes a task adopt a new snapshot of its project's
+// current configuration and instruction files. A snapshot equal to the
+// task's own is reported with no change and stores nothing. Otherwise
+// the active time interval a crash left open is reconciled first —
+// charged, never refunded; a budget it exceeds does not stop the update,
+// which may be what raises it — then the task adopts the snapshot after
+// quiescence. No publication or integration operation exists for a task
+// yet: the guard receives them as not published and settled.
+func (s *Server) updateTaskConfig(w http.ResponseWriter, r *http.Request) {
+	var request transitionRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		fail(w, r, http.StatusBadRequest, CodeInvalidRequest, "body must be {\"project_id\": \"<id>\"}")
+		return
+	}
+	project, ok := s.taskProject(w, r, request.ProjectID)
+	if !ok {
+		return
+	}
+	found, ok := s.projectTask(w, r, project)
+	if !ok {
+		return
+	}
+	configID, ok := s.snapshotProject(w, r, project)
+	if !ok {
+		return
+	}
+	if configID != found.ConfigID && !found.State.Terminal() {
+		_, err := budget.Store{DB: s.DB, Now: s.Tasks.Now}.Recover(found.ID)
+		if errors.Is(err, budget.ErrClockRegression) {
+			fail(w, r, http.StatusConflict, CodeConflict, err.Error())
+			return
+		}
+		if err != nil && !errors.Is(err, budget.ErrExceeded) {
+			fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
+			return
+		}
+	}
+	updated, err := s.Tasks.UpdateConfig(found.ID, task.ConfigUpdate{
+		ConfigID: configID, Published: false, OperationSettled: true,
+	})
+	if errors.Is(err, task.ErrTransition) || errors.Is(err, task.ErrGuard) {
+		fail(w, r, http.StatusConflict, CodeConflict, err.Error())
+		return
+	}
+	if err != nil {
+		fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
+		return
+	}
+	changes := updated.Changes
+	if changes == nil {
+		changes = config.Changes{}
+	}
+	reply(w, r, http.StatusOK, configUpdateView{
+		Task: viewTask(updated.Task), Previous: updated.Previous, ConfigID: updated.Task.ConfigID,
+		Updated: updated.Previous != updated.Task.ConfigID, Impact: changes.Impact(), Changes: changes,
+	})
 }
 
 // userWorkTree returns the working tree of a project's user repository,

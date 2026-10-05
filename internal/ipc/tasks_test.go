@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goabonga/maestro/internal/config"
 	"github.com/goabonga/maestro/internal/task"
@@ -301,5 +302,152 @@ func TestResumeTaskFollowsItsStoredContinuation(t *testing.T) {
 	status, _, raw = call(t, web, "POST", path, map[string]string{"Idempotency-Key": "k5"}, "{}")
 	if status != http.StatusBadRequest {
 		t.Fatalf("resume without a project: status=%d body=%s", status, raw)
+	}
+}
+
+// decodeConfigUpdate reads the configuration update of an envelope.
+func decodeConfigUpdate(t *testing.T, envelope Envelope) configUpdateView {
+	t.Helper()
+	raw, err := json.Marshal(envelope.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view configUpdateView
+	if err := json.Unmarshal(raw, &view); err != nil {
+		t.Fatalf("not a configuration update: %s", raw)
+	}
+	return view
+}
+
+func TestUpdateTaskConfigAdoptsTheCurrentFiles(t *testing.T) {
+	server, web, project := taskServer(t)
+	created := newTask(t, web, project.ID, "k1", "first")
+	request := body(t, map[string]string{"project_id": project.ID})
+	path := "/v1/tasks/" + created.ID + "/config"
+
+	// Nothing changed since the task was created.
+	status, envelope, raw := call(t, web, "POST", path, map[string]string{"Idempotency-Key": "k2"}, request)
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, raw)
+	}
+	if view := decodeConfigUpdate(t, envelope); view.Updated || len(view.Changes) != 0 ||
+		view.ConfigID != created.ConfigID || view.Task.Version != created.Version {
+		t.Fatalf("view=%+v", view)
+	}
+
+	rev := strings.Repeat("a", 40)
+	for _, in := range []task.Input{
+		{Event: task.Assign, Guard: task.Guard{AssignmentAvailable: true}},
+		{Event: task.AcceptPlan, Guard: task.Guard{PlanValid: true}},
+		{Event: task.Implement, Revision: rev, Guard: task.Guard{ArtifactValid: true}},
+		{Event: task.TestsPass, Revision: rev},
+	} {
+		if _, err := server.Tasks.Transition(created.ID, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A crash left the reviewing interval open: the update charges it.
+	if _, err := server.DB.Exec(`INSERT INTO budget_time (task_id, open_step, open_since, open_mark, updated_at)
+		VALUES (?, 'reviewing', ?, ?, ?)`, created.ID, created.CreatedAt.Format(time.RFC3339Nano),
+		created.CreatedAt.Format(time.RFC3339Nano), created.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	workTree := filepath.Dir(project.UserRepository)
+	if err := os.MkdirAll(filepath.Join(workTree, config.InstructionsDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workTree, config.InstructionsDir, "coder.md"), []byte("be brief\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workTree, config.ProjectFile), []byte("[budgets]\nmax_turns_per_task = 50\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, envelope, first := call(t, web, "POST", path, map[string]string{"Idempotency-Key": "k3"}, request)
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, first)
+	}
+	view := decodeConfigUpdate(t, envelope)
+	if !view.Updated || view.Previous != created.ConfigID || view.ConfigID == created.ConfigID ||
+		view.Task.ConfigID != view.ConfigID || view.Task.State != string(task.Planning) || view.Impact != config.ImpactObjective ||
+		len(view.Changes) != 2 || view.Changes[0].Key != "budgets.max_turns_per_task" || view.Changes[1].Key != "maestro/coder.md" {
+		t.Fatalf("view=%+v", view)
+	}
+	var open string
+	var active int64
+	if err := server.DB.QueryRow("SELECT open_step, active_ns FROM budget_time WHERE task_id = ?", created.ID).Scan(&open, &active); err != nil {
+		t.Fatal(err)
+	}
+	if open != "" || active <= 0 {
+		t.Fatalf("open=%q active=%d", open, active)
+	}
+	journal, err := server.Tasks.ConfigUpdates(created.ID)
+	if err != nil || len(journal) != 1 || journal[0].ConfigID != view.ConfigID {
+		t.Fatalf("journal=%+v err=%v", journal, err)
+	}
+
+	// A retry replays the stored response.
+	status, _, second := call(t, web, "POST", path, map[string]string{"Idempotency-Key": "k3"}, request)
+	if status != http.StatusOK || !bytes.Equal(first, second) {
+		t.Fatalf("replay: status=%d body=%s", status, second)
+	}
+}
+
+func TestUpdateTaskConfigErrors(t *testing.T) {
+	server, web, project := taskServer(t)
+	created := newTask(t, web, project.ID, "k1", "first")
+	request := body(t, map[string]string{"project_id": project.ID})
+	path := "/v1/tasks/" + created.ID + "/config"
+	workTree := filepath.Dir(project.UserRepository)
+	if err := os.WriteFile(filepath.Join(workTree, config.ProjectFile), []byte("[tests.unit]\nargv = [\"make\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, _, raw := call(t, web, "POST", path, nil, request)
+	if status != http.StatusBadRequest {
+		t.Fatalf("no key: status=%d body=%s", status, raw)
+	}
+	status, _, raw = call(t, web, "POST", "/v1/tasks/missing/config", map[string]string{"Idempotency-Key": "k2"}, request)
+	if status != http.StatusNotFound {
+		t.Fatalf("unknown task: status=%d body=%s", status, raw)
+	}
+
+	// A turn that has not ended keeps the task from adopting.
+	if _, err := server.DB.Exec(`INSERT INTO turns (turn_id, attempt_id, task_id, agent, config_id, state,
+		turn_timeout_ns, input_wait_timeout_ns, created_at, updated_at)
+		VALUES ('u1', 'x1', ?, 'coder', ?, 'RUNNING', 1, 1, 'now', 'now')`, created.ID, created.ConfigID); err != nil {
+		t.Fatal(err)
+	}
+	status, envelope, raw := call(t, web, "POST", path, map[string]string{"Idempotency-Key": "k3"}, request)
+	if status != http.StatusConflict || envelope.Error == nil || !strings.Contains(envelope.Error.Message, "turn") {
+		t.Fatalf("running turn: status=%d body=%s", status, raw)
+	}
+	if _, err := server.DB.Exec("UPDATE turns SET state = 'FAILED'"); err != nil {
+		t.Fatal(err)
+	}
+
+	// An invalid configuration is refused before anything changes.
+	if err := os.WriteFile(filepath.Join(workTree, config.ProjectFile), []byte("unknown_key = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, _, raw = call(t, web, "POST", path, map[string]string{"Idempotency-Key": "k4"}, request)
+	if status != http.StatusBadRequest {
+		t.Fatalf("invalid configuration: status=%d body=%s", status, raw)
+	}
+	if err := os.WriteFile(filepath.Join(workTree, config.ProjectFile), []byte("[tests.unit]\nargv = [\"make\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// An ended task never adopts a snapshot.
+	if _, err := server.Tasks.Transition(created.ID, task.Input{Event: task.Cancel, Guard: task.Guard{
+		ProcessesStopped: true, OperationSettled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	status, envelope, raw = call(t, web, "POST", path, map[string]string{"Idempotency-Key": "k5"}, request)
+	if status != http.StatusConflict || envelope.Error == nil || envelope.Error.Code != CodeConflict {
+		t.Fatalf("cancelled task: status=%d body=%s", status, raw)
+	}
+	stored, err := server.Tasks.Get(created.ID)
+	if err != nil || stored.ConfigID != created.ConfigID {
+		t.Fatalf("stored=%+v err=%v", stored, err)
 	}
 }
