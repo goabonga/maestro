@@ -15,7 +15,7 @@ nav = [
     { "Running the daemon" = "daemon.md" },
     { "Backup, restore and cleanup" = "maintenance.md" },
     { "Checking agents" = "agents.md" },
-    { "Development" = [{ "Project structure" = "development/structure.md" }, { "GitHub automation" = "development/github.md" }, { "Driver validation" = "development/validation.md" }, { "Turn lifecycle" = "development/turns.md" }, { "Instruction provisioning" = "development/instructions.md" }, { "MCP translation" = "development/mcp-translation.md" }, { "Runtime path control" = "development/runtime-paths.md" }] },
+    { "Development" = [{ "Project structure" = "development/structure.md" }, { "GitHub automation" = "development/github.md" }, { "Driver validation" = "development/validation.md" }, { "Turn lifecycle" = "development/turns.md" }, { "Instruction provisioning" = "development/instructions.md" }, { "MCP translation" = "development/mcp-translation.md" }, { "Runtime path control" = "development/runtime-paths.md" }, { "Task workflow" = "development/tasks.md" }, { "Test runner" = "development/test-runner.md" }] },
     { "Versions" = "versions.md" },
 ]
 

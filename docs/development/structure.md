@@ -24,6 +24,8 @@ component owns it, and how the pieces depend on each other.
 | `internal/config/` | Layered project configuration and the immutable snapshots identified by `config_id`. |
 | `internal/turn/` | Turn lifecycle: explicit transitions, persisted timeouts, retries as linked attempts ([details](turns.md)). |
 | `internal/provision/` | Agent provisioning: native instruction files ([details](instructions.md)), MCP translation ([details](mcp-translation.md)), runtime path control ([details](runtime-paths.md)). |
+| `internal/task/` | Task workflow: the authoritative transition table, guards, durable continuations ([details](tasks.md)). |
+| `internal/testrun/` | Test runner: configured argv commands in a sandbox on a private clone of one SHA ([details](test-runner.md)). |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
