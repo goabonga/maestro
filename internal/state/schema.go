@@ -26,4 +26,9 @@ var Migrations = []Migration{
 		document BLOB NOT NULL
 	);
 	CREATE INDEX artifacts_by_turn ON artifacts (task_id, turn_id, attempt_id)`},
+	{Version: 3, SQL: `CREATE TABLE config_snapshots (
+		config_id TEXT PRIMARY KEY,
+		created_at TEXT NOT NULL,
+		document BLOB NOT NULL
+	)`},
 }

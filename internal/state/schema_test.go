@@ -35,3 +35,17 @@ func TestArtifactsTableKeepsOneRowPerArtifact(t *testing.T) {
 		t.Fatal("a second row for the same artifact was accepted")
 	}
 }
+
+func TestConfigSnapshotsKeepOneRowPerID(t *testing.T) {
+	db := openDB(t)
+	if err := db.Migrate(Migrations); err != nil {
+		t.Fatal(err)
+	}
+	insert := "INSERT INTO config_snapshots (config_id, created_at, document) VALUES ('sha256-x', 'now', '{}')"
+	if _, err := db.Exec(insert); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(insert); err == nil {
+		t.Fatal("a second row for the same config_id was accepted")
+	}
+}
