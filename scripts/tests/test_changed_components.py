@@ -66,7 +66,11 @@ def test_invalid_component_response_is_rejected_without_writing_outputs(output_f
 def test_detection_follows_plumber_and_tool_installation_with_full_history():
     workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text()
     components = workflow.split("  components:")[1].split("  licenses:")[0]
-    assert "needs: plumber" in components
+    assert "needs: [plumber, signatures]" in components
+    assert "!failure() && !cancelled()" in components
+    signatures = workflow.split("  signatures:")[1].split("  components:")[0]
+    assert "needs: plumber" in signatures
+    assert workflow.index("  plumber:") < workflow.index("  signatures:") < workflow.index("  components:")
     assert components.index("uv tool install multicz") < components.index("List changed multicz components")
     assert "fetch-depth: 0" in components
     assert "changed-components --ci" in components
