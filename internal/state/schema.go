@@ -165,4 +165,39 @@ var Migrations = []Migration{
 		at TEXT NOT NULL
 	);
 	CREATE INDEX operation_events_by_operation ON operation_events (operation_id, event_id)`},
+	{Version: 10, SQL: `CREATE TABLE workers (
+		project_id TEXT NOT NULL CHECK (project_id <> ''),
+		name TEXT NOT NULL CHECK (name <> ''),
+		agent TEXT NOT NULL CHECK (agent <> ''),
+		agent_kind TEXT NOT NULL CHECK (agent_kind <> ''),
+		driver TEXT NOT NULL CHECK (driver <> ''),
+		repository TEXT NOT NULL CHECK (repository <> ''),
+		state TEXT NOT NULL CHECK (state IN ('STOPPED', 'STARTING', 'IDLE', 'BUSY', 'WAITING_INPUT',
+			'ATTACHED', 'PAUSED', 'DRAINING', 'FAILED')),
+		version INTEGER NOT NULL CHECK (version >= 1),
+		task_id TEXT REFERENCES tasks (task_id),
+		role TEXT NOT NULL DEFAULT '',
+		turn_id TEXT UNIQUE REFERENCES turns (turn_id),
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		reason TEXT NOT NULL DEFAULT '',
+		PRIMARY KEY (project_id, name),
+		CHECK ((task_id IS NULL) = (turn_id IS NULL) AND (task_id IS NULL) = (role = '')),
+		CHECK (state NOT IN ('BUSY', 'WAITING_INPUT') OR turn_id IS NOT NULL),
+		CHECK (state NOT IN ('STOPPED', 'STARTING', 'IDLE', 'PAUSED') OR turn_id IS NULL)
+	);
+	CREATE TABLE worker_events (
+		event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+		project_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		event TEXT NOT NULL,
+		from_state TEXT NOT NULL,
+		to_state TEXT NOT NULL,
+		task_id TEXT NOT NULL DEFAULT '',
+		turn_id TEXT NOT NULL DEFAULT '',
+		reason TEXT NOT NULL,
+		at TEXT NOT NULL,
+		FOREIGN KEY (project_id, name) REFERENCES workers (project_id, name)
+	);
+	CREATE INDEX worker_events_by_worker ON worker_events (project_id, name, event_id)`},
 }
