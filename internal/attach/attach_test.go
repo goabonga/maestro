@@ -256,3 +256,38 @@ func TestResizesDeliversWindowChangesUntilStopped(t *testing.T) {
 		t.Fatal("SIGWINCH was not delivered")
 	}
 }
+
+func TestRunStopsReadingTheTerminalWhenItReturns(t *testing.T) {
+	socket, _, keyboard, terminal := attachFixture(t, "/bin/sh", "-c", "read line; exit 0")
+	before := modes(t, terminal)
+	finished := make(chan error, 1)
+	go func() {
+		finished <- Run(context.Background(), socket, "s1", Terminal{In: terminal, Out: &lockedBuffer{}})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && modes(t, terminal) == before {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := keyboard.Write([]byte("now\r")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("attach did not return after the session ended")
+	}
+
+	// What is typed after the attach belongs to the next reader.
+	if _, err := keyboard.Write([]byte("after\n")); err != nil {
+		t.Fatal(err)
+	}
+	fds := []unix.PollFd{{Fd: int32(terminal.Fd()), Events: unix.POLLIN}}
+	if n, err := unix.Poll(fds, 5000); err != nil || n == 0 {
+		t.Fatalf("the input typed after the attach was consumed: %d, %v", n, err)
+	}
+	line := make([]byte, 64)
+	n, err := terminal.Read(line)
+	if err != nil || !strings.Contains(string(line[:n]), "after") {
+		t.Fatalf("read %q, %v", line[:n], err)
+	}
+}

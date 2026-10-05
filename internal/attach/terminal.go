@@ -4,8 +4,15 @@
 package attach
 
 import (
+	"errors"
+	"time"
+
 	"golang.org/x/sys/unix"
 )
+
+// pollInterval bounds how long the input relay takes to notice the end
+// of an attach.
+const pollInterval = 50 * time.Millisecond
 
 // rawTerminal switches a terminal to raw mode and returns the function
 // that restores its previous settings. A non-terminal is left alone and
@@ -38,4 +45,29 @@ func terminalSize(fd int) (uint16, uint16, bool) {
 		return 0, 0, false
 	}
 	return size.Row, size.Col, true
+}
+
+// waitReadable waits until fd has input to read, and returns false once
+// done is closed. A hang-up or an error on fd counts as readable, so the
+// next read reports it.
+func waitReadable(fd int, done <-chan struct{}) (bool, error) {
+	// #nosec G115 -- a file descriptor is a small non-negative integer bounded by RLIMIT_NOFILE.
+	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+	for {
+		select {
+		case <-done:
+			return false, nil
+		default:
+		}
+		n, err := unix.Poll(fds, int(pollInterval/time.Millisecond))
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if n > 0 {
+			return true, nil
+		}
+	}
 }
