@@ -134,9 +134,9 @@ Each validation job runs only for what the change touches. Jobs are:
 | Job | Runs when | Checks |
 | --- | --- | --- |
 | `audit` | always | Plumber compliance |
-| `detect changed components` | always, after `audit` | multicz configuration, changed components |
+| `check commit signatures` | every pull request, after `audit` | each PR commit carries a signature verified by GitHub; a failure stops the pipeline |
+| `detect changed components` | always, after `audit` and, on pull requests, after a successful signature check | multicz configuration, changed components |
 | `check license headers` | at least one component changed, after detection | SPDX headers |
-| `check commit signatures` | every pull request | each PR commit carries a signature verified by GitHub |
 | `validate scripts` | `maestro-scripts` changed | byte-compilation, and the tests the change affects |
 | `validate go` | a registered Go component changed, through its own paths or its imports | formatting, vet, race tests, build and gosec |
 | `validate documentation` | `maestro-docs` changed (`docs/**`, `zensical.toml`, `assets/maestro.svg`) | generated branding, documentation build |
@@ -144,7 +144,8 @@ Each validation job runs only for what the change touches. Jobs are:
 Detection runs `multicz changed` and nothing else: a component changed when it has
 commits since its latest tag, exactly as in the reference pipeline. A commit that changes
 no component, such as a `chore`, therefore runs no validation, no release and no
-documentation publication. Only `audit` and detection itself always run.
+documentation publication. Only `audit` and detection itself always run; on a pull
+request, an unsigned commit stops the pipeline before detection, so nothing is validated.
 Scripts and their tests are selected from the diff against the PR base or the previous
 push, which only narrows which test files run.
 
