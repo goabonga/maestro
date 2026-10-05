@@ -42,6 +42,10 @@ type Server struct {
 
 	// syncs tracks the syncs running in the background.
 	syncs sync.WaitGroup
+
+	// Operations journals the integration operations; nil disables
+	// the publication route.
+	Operations *integration.Store
 }
 
 // projectView is the JSON shape of a project.
@@ -66,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/stream", s.streamSession)
 	s.taskRoutes(mux)
 	s.syncRoutes(mux)
+	s.publishRoutes(mux)
 	mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusNotFound, CodeNotFound, "unknown route: "+r.URL.Path)
 	})
