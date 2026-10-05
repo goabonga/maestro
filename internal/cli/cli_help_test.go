@@ -50,7 +50,7 @@ func TestEveryCommandHasItsHelp(t *testing.T) {
 func TestEveryListedCommandIsDispatched(t *testing.T) {
 	// A listed command is reached through the table: called without its
 	// arguments it answers with its own usage, never "unknown command".
-	for _, name := range []string{"project", "daemon", "task", "sync", "worktree", "diff", "attach", "agent", "backup", "restore", "gc"} {
+	for _, name := range []string{"project", "daemon", "task", "worker", "sync", "worktree", "diff", "attach", "agent", "backup", "restore", "gc"} {
 		var output bytes.Buffer
 		err := Run(context.Background(), []string{name}, &output, "0.0.0")
 		if err != nil && strings.Contains(err.Error(), "unknown command") {
