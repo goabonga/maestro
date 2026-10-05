@@ -127,6 +127,7 @@ func Start(l *launcher.Launcher, config Config) (*Session, error) {
 		done:        make(chan struct{}),
 		subscribers: map[chan []byte]func(){},
 	}
+	readDone := make(chan struct{})
 	go func() {
 		// The PTY master returns EIO once the group is gone; every
 		// byte before that lands in the bounded buffer and reaches
@@ -139,6 +140,10 @@ func Start(l *launcher.Launcher, config Config) (*Session, error) {
 				session.broadcast(chunk[:n])
 			}
 			if err != nil {
+				// A reaped group closes every slave. Drain through EIO
+				// before closing the master, preserving the final output.
+				_ = master.Close()
+				close(readDone)
 				// Subscribers learn of the end only once the state is
 				// reconciled, so they never see a dead session as
 				// running.
@@ -150,12 +155,12 @@ func Start(l *launcher.Launcher, config Config) (*Session, error) {
 	}()
 	go func() {
 		err := command.Wait()
+		<-readDone
 		session.mu.Lock()
 		if session.phase == Running {
 			session.phase = Exited
 		}
 		session.exit = exitCode(err)
-		_ = session.master.Close()
 		session.mu.Unlock()
 		close(session.done)
 	}()
