@@ -112,4 +112,14 @@ var Migrations = []Migration{
 	{Version: 7, SQL: `ALTER TABLE tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
 	ALTER TABLE tasks ADD COLUMN description TEXT NOT NULL DEFAULT '';
 	CREATE INDEX tasks_by_project ON tasks (project_id, created_at)`},
+	{Version: 8, SQL: `CREATE TABLE task_config_updates (
+		event_id INTEGER PRIMARY KEY REFERENCES task_events (event_id),
+		task_id TEXT NOT NULL REFERENCES tasks (task_id),
+		old_config_id TEXT NOT NULL REFERENCES config_snapshots (config_id),
+		new_config_id TEXT NOT NULL REFERENCES config_snapshots (config_id),
+		impact TEXT NOT NULL,
+		changes TEXT NOT NULL,
+		CHECK (old_config_id <> new_config_id)
+	);
+	CREATE INDEX task_config_updates_by_task ON task_config_updates (task_id, event_id)`},
 }
