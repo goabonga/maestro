@@ -269,3 +269,57 @@ func TestOperationsJournalKeepsItsInvariants(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWorkersKeepTheirIdentityAndAssignment(t *testing.T) {
+	db := openDB(t)
+	if err := db.Migrate(Migrations); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"INSERT INTO config_snapshots (config_id, created_at, document) VALUES ('sha256-x', 'now', '{}')",
+		"INSERT INTO tasks (task_id, config_id, task_base_sha, branch, state, version, max_fix_cycles, created_at, updated_at) VALUES ('t1', 'sha256-x', 'b', 'maestro/task-t1', 'NEW', 1, 3, 'now', 'now')",
+		"INSERT INTO turns (turn_id, attempt_id, task_id, agent, config_id, state, turn_timeout_ns, input_wait_timeout_ns, created_at, updated_at) VALUES ('u1', 'x1', 't1', 'claude', 'sha256-x', 'PREPARED', 1, 1, 'now', 'now')",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert := `INSERT INTO workers (project_id, name, agent, agent_kind, driver, repository, state, version,
+		task_id, role, turn_id, created_at, updated_at) VALUES ('p1', ?, 'claude', 'claude-code', 'claude-code-2.1', '/r', ?, 1, ?, ?, ?, 'now', 'now')`
+	refused := []struct {
+		name string
+		args []any
+	}{
+		{"an unknown state", []any{"w1", "RUNNING", nil, "", nil}},
+		{"a busy worker without its assignment", []any{"w1", "BUSY", nil, "", nil}},
+		{"an idle worker with an assignment", []any{"w1", "IDLE", "t1", "implementation", "u1"}},
+		{"an assignment without its turn", []any{"w1", "ATTACHED", "t1", "implementation", nil}},
+		{"an assignment without its role", []any{"w1", "BUSY", "t1", "", "u1"}},
+		{"an assignment of an unknown task", []any{"w1", "BUSY", "missing", "implementation", "u1"}},
+		{"an assignment of an unknown turn", []any{"w1", "BUSY", "t1", "implementation", "missing"}},
+	}
+	for _, c := range refused {
+		if _, err := db.Exec(insert, c.args...); err == nil {
+			t.Fatalf("%s was accepted", c.name)
+		}
+	}
+	if _, err := db.Exec(insert, "w1", "BUSY", "t1", "implementation", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(insert, "w1", "STOPPED", nil, "", nil); err == nil {
+		t.Fatal("a second worker with the same name in the project was accepted")
+	}
+	if _, err := db.Exec(insert, "w2", "BUSY", "t1", "implementation", "u1"); err == nil {
+		t.Fatal("a turn assigned to two workers was accepted")
+	}
+	if _, err := db.Exec(insert, "w2", "STOPPED", nil, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	event := "INSERT INTO worker_events (project_id, name, event, from_state, to_state, reason, at) VALUES ('p1', ?, 'register', '', 'STOPPED', '', 'now')"
+	if _, err := db.Exec(event, "missing"); err == nil {
+		t.Fatal("an event for an unknown worker was accepted")
+	}
+	if _, err := db.Exec(event, "w1"); err != nil {
+		t.Fatal(err)
+	}
+}
