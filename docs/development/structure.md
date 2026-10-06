@@ -362,3 +362,12 @@ Python tests use pytest functions and fixtures. Go tests cover HTTP routing, the
 socket lifecycle, `maestro status`, graceful shutdown, and the project store
 against temporary Git repositories. See
 [GitHub automation](github.md) for change detection, signing and releases.
+
+The suite is safe to run from a command spawned by Git, such as
+`git rebase --exec 'make go-check'`, which exports `GIT_DIR` and its siblings.
+Every package whose tests run Git clears all inherited `GIT_*` variables in its
+`TestMain` and ignores the global and system Git configuration, so tests only
+touch the temporary repositories they create. Maestro's own Git commands that
+target an explicit directory likewise drop the variables through which Git
+locates another repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+`GIT_COMMON_DIR` and the rest of `git rev-parse --local-env-vars`).
