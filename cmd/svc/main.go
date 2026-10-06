@@ -115,15 +115,20 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		Tasks: &task.Store{DB: db}, Sync: &integration.Syncer{Store: integration.Store{DB: db}},
 		Operations: &integration.Store{DB: db}, Workers: &worker.Store{DB: db},
 	}
+	// Workers start in confined sessions bounded by the session ceiling.
+	server.Supervisor = &worker.Supervisor{Store: worker.Store{DB: db}, Projects: store, Capacity: capacity}
 	// A sync runs its tests confined; a host that cannot confine has no
 	// test runner, and every sync is refused rather than left untested.
+	// Without confinement, every worker start is refused as well.
 	if confined, err := launcher.New(); err == nil {
 		server.Sync.Tester = &testrun.Runner{Launcher: confined}
+		server.Supervisor.Launcher = confined
 	}
 	err = transport.Serve(ctx, listener, server.Handler())
-	// A sync running in the background finishes its journal before the
-	// store closes.
+	// A sync running in the background finishes its journal, and every
+	// live worker is stopped, before the store closes.
 	server.Wait()
+	server.Supervisor.Close()
 	return err
 }
 
