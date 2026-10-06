@@ -72,6 +72,41 @@ $ maestro task resume 3f2b8c1e-…
 task 3f2b8c1e-…: NEW
 ```
 
+## Progress
+
+A task advances on the project's started workers
+(`maestro worker start`, see the [command reference](cli.md#workers)).
+The daemon drives the project's tasks when a task is created or
+resumed, when a worker becomes `IDLE`, and every minute: oldest first,
+one at a time, each on the first `IDLE` worker of the project.
+
+A task goes through planning, implementation, tests, review and
+corrections, one agent turn at a time, until it is `READY_TO_INTEGRATE`
+or `BLOCKED`:
+
+- each turn writes the role's prompt into the worker's agent session
+  and waits for the agent to end its turn, then reads the handoff
+  document the prompt asks for; a missing or invalid document gets one
+  repair turn;
+- the agent writes the task's sources only during its turns: before its
+  first turn, between two turns and while the end of a turn is checked,
+  its session runs with read-only sources, and the session of a worker
+  that fails is ended;
+- the project's configured test commands run on each implemented
+  revision;
+- a failed turn, a turn timeout, an agent asking for input, an invalid
+  document after its repair, or an exhausted budget blocks the task with
+  its reason.
+
+Without a started worker, a task stays `NEW`. `maestro task show` lists
+every step in the task's history, and `maestro worker show` the events
+of a worker with the task and turn they are about. Once the cause of a
+block is lifted, `maestro task resume` continues the task from the step
+that stopped. A task blocked on an agent asking for input stays held by
+its waiting worker: a resume takes effect only once the input wait has
+expired and failed the worker, or the worker has released the
+assignment.
+
 ## Update the configuration
 
 A task keeps the configuration snapshot it was created with. `maestro
