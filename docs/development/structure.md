@@ -9,7 +9,7 @@ component owns it, and how the pieces depend on each other.
 | Path | Contents |
 | --- | --- |
 | `cmd/cli/` | Entry point of the `maestro` command. Only wires flags, signals and `internal/cli`. |
-| `cmd/svc/` | Entry point of the `maestro-svc` daemon: flags, user lock, store migration, socket serving. |
+| `cmd/svc/` | Entry point of the `maestro-svc` daemon: flags, user lock, store migration, socket serving, and the background drives of the task engine. |
 | `internal/cli/` | Command logic: `--version`, help and the `init`, `status`, `daemon`, `project`, `worktree list`, `diff`, `attach`, `agent doctor`, `task`, `worker`, `tui`, `sync`, `publish`, `backup`, `restore` and `gc` subcommands. |
 | `internal/transport/` | Unix socket listener and client, HTTP serving with graceful shutdown, `/healthz`. |
 | `internal/worktree/` | Project store: the data directory, the canonical repository import and the private per-worker clones. |
