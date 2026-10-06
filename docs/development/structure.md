@@ -136,6 +136,9 @@ so stopping the leader (SIGTERM, then SIGKILL after the grace period)
 lets the kernel tear the whole namespace down: descendant termination
 is a kernel guarantee, not a best effort. The launcher tests skip on a
 host that cannot confine; CI installs the tooling to run them.
+`launcher.Survivors` lists the processes still working in a directory,
+by their working directory as the host sees it; it only observes, for
+the startup reconciliation of workers ([details](workers.md#startup-reconciliation)).
 
 ## PTY sessions
 
