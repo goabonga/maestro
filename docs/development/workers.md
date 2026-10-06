@@ -175,12 +175,13 @@ not reused, until the group is seen gone.
 event, so it is `DRAINING` and takes no new assignment; its confined
 group is terminated (SIGTERM, then SIGKILL after the grace period), its
 slot released, and it takes the `drained` event to `STOPPED`. A `FAILED`
-worker takes the `stop` event to `STOPPED` once its group is gone: when
-an earlier termination of its group failed, the stop retries it first. A
-worker that is `STARTING`, already `STOPPED`, holding an assignment,
-already being stopped by another call or being torn down after its
-session ended on its own is refused with `worker.ErrTransition`: stops
-of one worker never run concurrently. A
+worker takes the `stop` event to `STOPPED` once its group is gone,
+releasing the assignment it kept: when an earlier termination of its
+group failed, the stop retries it first. A worker that is `STARTING`,
+already `STOPPED`, live and holding an assignment, already being
+stopped by another call or being torn down after its session ended on
+its own is refused with `worker.ErrTransition`: stops of one worker
+never run concurrently. A
 group that cannot be terminated leaves the worker `FAILED`, its slot
 held until the group ends, and a later stop that cannot terminate it
 either leaves it `FAILED` too.
