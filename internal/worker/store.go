@@ -107,6 +107,30 @@ func (s Store) Register(project worktree.Project, spec Spec) (Worker, error) {
 	return registered, nil
 }
 
+// unregister removes a worker a refused start registered, with its
+// events: only a STOPPED or STARTING worker without assignment.
+func (s Store) unregister(projectID, workerName string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM worker_events WHERE project_id = ? AND name = ?`, projectID, workerName); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM workers WHERE project_id = ? AND name = ?
+		AND state IN ('STOPPED', 'STARTING') AND turn_id IS NULL`, projectID, workerName)
+	if err != nil {
+		return err
+	}
+	if removed, err := result.RowsAffected(); err != nil {
+		return err
+	} else if removed != 1 {
+		return fmt.Errorf("%w: %s cannot be unregistered", ErrTransition, workerName)
+	}
+	return tx.Commit()
+}
+
 // Transition applies one event to a worker. The new state and the
 // assignment are stored with the event in one transaction, and only if
 // the worker is still at the state and version that were read: a
