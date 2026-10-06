@@ -74,6 +74,9 @@ type Supervisor struct {
 	// CloseTimeout bounds the wait of Close for the groups it could not
 	// terminate; 0 means DefaultCloseTimeout.
 	CloseTimeout time.Duration
+	// Ready, when set, is called with the project of every started
+	// worker once it reaches IDLE.
+	Ready func(project worktree.Project)
 
 	// tearDown replaces teardown in tests; nil means teardown.
 	tearDown func(*running) error
@@ -350,6 +353,10 @@ func (s *Supervisor) launch(plan launchPlan) {
 	}
 	if err != nil {
 		s.abandon(key, live, "start failed: "+err.Error())
+		return
+	}
+	if s.Ready != nil {
+		s.Ready(plan.project)
 	}
 }
 

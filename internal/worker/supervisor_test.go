@@ -845,3 +845,36 @@ func TestSupervisorStopsAFailedWorkerThatHoldsAnAssignment(t *testing.T) {
 		t.Fatalf("a busy worker was stopped: %+v %v", busy, err)
 	}
 }
+
+func TestSupervisorReportsTheWorkersThatBecomeIdle(t *testing.T) {
+	h := newHarness(t, confined(t), 2, map[string]string{"claude": claudeFixture})
+	ready := make(chan worktree.Project, 4)
+	h.supervisor.Ready = func(project worktree.Project) { ready <- project }
+	if _, err := h.supervisor.Start(context.Background(), h.request("claude-code", 1, config.Snapshot{Config: config.Defaults()})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case project := <-ready:
+		if project.ID != h.project.ID {
+			t.Fatalf("reported project %s, want %s", project.ID, h.project.ID)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the idle worker was never reported")
+	}
+	if w := h.settle(t, "claude-code-01", Idle); w.State != Idle {
+		t.Fatalf("worker %+v", w)
+	}
+
+	// A worker that fails to start is not reported.
+	crashing := newHarness(t, confined(t), 1, map[string]string{"claude": crashingFixture})
+	crashing.supervisor.Ready = h.supervisor.Ready
+	if _, err := crashing.supervisor.Start(context.Background(), crashing.request("claude-code", 1, config.Snapshot{Config: config.Defaults()})); err != nil {
+		t.Fatal(err)
+	}
+	crashing.settle(t, "claude-code-01", Failed)
+	select {
+	case project := <-ready:
+		t.Fatalf("reported %s for a failed start", project.ID)
+	default:
+	}
+}
