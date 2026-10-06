@@ -6,9 +6,13 @@ package integration
 import (
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -80,7 +84,8 @@ type crashCase struct {
 
 // crashAllFlows returns every flow of the harness.
 func crashAllFlows() []crashFlow {
-	return append(crashIntegrationFlows(), crashSyncFlows()...)
+	flows := append(crashIntegrationFlows(), crashSyncFlows()...)
+	return append(flows, crashUserPublishFlows()...)
 }
 
 // TestCrashChild is the child process of the crash injection tests; it
@@ -353,6 +358,102 @@ func TestCrashInjection(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCrashPointsDeclared checks the crash points against the source of
+// the package: every crashHook call names a point declared in crash.go,
+// and every declared point is called and injected by some flow, so a
+// point on a path no flow runs to its end still needs its test.
+func TestCrashPointsDeclared(t *testing.T) {
+	declared := crashDeclaredPoints(t)
+	if len(declared) == 0 {
+		t.Fatal("no crash point declared in crash.go")
+	}
+	injected := map[string]bool{}
+	for _, flow := range crashAllFlows() {
+		for _, c := range flow.cases {
+			injected[c.point] = true
+		}
+	}
+	called := map[string]bool{}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if fn, ok := call.Fun.(*ast.Ident); !ok || fn.Name != "crashHook" {
+				return true
+			}
+			if len(call.Args) != 1 {
+				t.Errorf("%s: crashHook is not called with one crash point", name)
+				return true
+			}
+			arg, ok := call.Args[0].(*ast.Ident)
+			if !ok {
+				t.Errorf("%s: crashHook is not called with a declared crash point", name)
+				return true
+			}
+			point, ok := declared[arg.Name]
+			if !ok {
+				t.Errorf("%s: crashHook(%s) does not name a crash point of crash.go", name, arg.Name)
+				return true
+			}
+			called[point] = true
+			return true
+		})
+	}
+	for name, point := range declared {
+		if !called[point] {
+			t.Errorf("crash point %s (%s) is declared but never called", point, name)
+		}
+		if !injected[point] {
+			t.Errorf("crash point %s (%s) is declared but never injected", point, name)
+		}
+	}
+}
+
+// crashDeclaredPoints returns the crash points declared in crash.go, by
+// constant name.
+func crashDeclaredPoints(t *testing.T) map[string]string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "crash.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	points := map[string]string{}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			value := spec.(*ast.ValueSpec)
+			for i, name := range value.Names {
+				lit, ok := value.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					t.Fatalf("crash point %s is not a string literal", name.Name)
+				}
+				point, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				points[name.Name] = point
+			}
+		}
+	}
+	return points
 }
 
 // crashIntegrationFlows are the flows of an INTEGRATE operation: the
