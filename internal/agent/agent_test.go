@@ -122,3 +122,30 @@ func TestDriversListsEveryRegisteredDriver(t *testing.T) {
 		t.Fatal("the registry handed out its own slice")
 	}
 }
+
+func TestInstalledSelectsTheDriverOfTheInstalledVersion(t *testing.T) {
+	bin := t.TempDir()
+	fakeBinary(t, bin, "claude", "2.1.289 (Claude Code)")
+	fakeBinary(t, bin, "codex", "codex-cli 0.161.0")
+	lookPath := func(name string) (string, error) {
+		path := filepath.Join(bin, name)
+		if _, err := os.Stat(path); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+	installed, err := Builtin().Installed(context.Background(), "claude-code", lookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installed.Path != filepath.Join(bin, "claude") || installed.Version != (Version{2, 1, 289}) ||
+		installed.Driver.Name != "claude-code-2.1" {
+		t.Fatalf("installed %+v", installed)
+	}
+	if _, err := Builtin().Installed(context.Background(), "codex", lookPath); !errors.Is(err, ErrNoDriver) {
+		t.Fatalf("an unvalidated version was accepted: %v", err)
+	}
+	if _, err := Builtin().Installed(context.Background(), "openai-compatible", lookPath); !errors.Is(err, ErrNoDriver) {
+		t.Fatalf("an unknown kind was accepted: %v", err)
+	}
+}
