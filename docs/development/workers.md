@@ -201,13 +201,16 @@ daemon is lost. Before it binds its socket, still under the user lock,
 registered project. The reconciliation moves workers only through the
 transition table, signals no process and resumes no conversation.
 
-It first searches the worker's repository for surviving processes with
-`launcher.Survivors`: the processes visible to the daemon whose working
-directory is that repository or lies below it. A confined group binds
-its workspace at the same path and works in it, so its processes show
-that path from the host. No persisted PID is trusted and the search
-proves no membership in a supervised group: a process it finds is an
-unidentified survivor, never a process to stop.
+It first searches the worker's workspaces for surviving processes with
+`launcher.Survivors`: its private repository and its own directory of
+the project, `workers/<worker>/`, which holds the worktree its session
+starts in, its private HOME and its supervisor state. A survivor is a
+process visible to the daemon whose working directory is one of them or
+lies below it. A confined group binds its workspace at the same path
+and works in it, so its processes show that path from the host. No
+persisted PID is trusted and the search proves no membership in a
+supervised group: a process it finds is an unidentified survivor, never
+a process to stop.
 
 | Recorded worker | Found | Decision |
 | --- | --- | --- |
