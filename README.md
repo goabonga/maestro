@@ -35,9 +35,14 @@ modified behind your back.
   configuration and instruction files it was created with, starts from
   the project's integration head on its own branch, and moves only
   through the transitions Maestro allows. [Managing tasks](docs/tasks.md)
-- **Shows its workers** (`maestro worker list|show`): each worker of a
-  project with its agent, driver, state, current assignment and recent
-  events. [Command reference](docs/cli.md#workers)
+- **Starts and stops workers** (`maestro worker start|stop|list|show`):
+  `maestro worker start <agent> --count <n>`, bounded by the daemon's
+  session ceiling, launches each worker's agent in a confined session
+  through its validated driver, on its own private repository, and waits
+  for its native session to be confirmed; `maestro worker stop` drains
+  it and terminates its session. Each worker is shown with its agent,
+  driver, state, current assignment and recent events.
+  [Command reference](docs/cli.md#workers)
 - **Shows a live dashboard** (`maestro tui`) of the daemon's status and
   capacity, the projects and their tasks with their history.
   [Terminal dashboard](docs/tui.md)
