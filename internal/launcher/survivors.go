@@ -5,12 +5,14 @@ package launcher
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // procRoot is the process table Survivors reads.
@@ -28,6 +30,12 @@ const deletedSuffix = " (deleted)"
 // caller never signals a process found here. The daemon's own process
 // is left out. A directory that was removed, or removed and created
 // again, still has the processes that kept working in it.
+//
+// A process that ends during the search is skipped. So is a process
+// the daemon is not permitted to inspect, such as one of another user
+// or one that is not dumpable: the search does not see its working
+// directory. Any other failure to read a working directory fails the
+// search.
 func Survivors(dir string) ([]int, error) {
 	return survivorsIn(procRoot, dir)
 }
@@ -57,11 +65,12 @@ func survivorsIn(root, dir string) ([]int, error) {
 		if err != nil || pid <= 0 || pid == self {
 			continue
 		}
-		// A process that ended meanwhile, or one the daemon may not
-		// inspect, has no readable working directory.
 		cwd, err := os.Readlink(filepath.Join(root, entry.Name(), "cwd"))
-		if err != nil {
+		switch {
+		case skipped(err):
 			continue
+		case err != nil:
+			return nil, fmt.Errorf("inspect process %d: %w", pid, err)
 		}
 		if within(strings.TrimSuffix(cwd, deletedSuffix), resolved) {
 			pids = append(pids, pid)
@@ -69,6 +78,13 @@ func survivorsIn(root, dir string) ([]int, error) {
 	}
 	sort.Ints(pids)
 	return pids, nil
+}
+
+// skipped reports a failure to read a working directory that the
+// search skips: the process ended, or the daemon may not inspect it.
+func skipped(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH) ||
+		errors.Is(err, fs.ErrPermission)
 }
 
 // resolve resolves the symbolic links of an absolute path. A path that

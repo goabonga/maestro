@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -166,6 +167,47 @@ func TestSurvivorsSkipUnreadableEntries(t *testing.T) {
 	}
 	if !slices.Equal(pids, []int{34}) {
 		t.Fatalf("survivors from the fixture table: %v, want [34]", pids)
+	}
+}
+
+func TestSurvivorsFailOnAWorkingDirectoryThatCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "56"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A cwd entry that is not a link cannot be read as one.
+	if err := os.WriteFile(filepath.Join(root, "56", "cwd"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := survivorsIn(root, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "inspect process 56") {
+		t.Fatalf("an unreadable working directory: %v", err)
+	}
+}
+
+func TestSurvivorsSkipAProcessTheDaemonMayNotInspect(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root inspects every process")
+	}
+	root := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	process := filepath.Join(root, "56")
+	if err := os.Mkdir(process, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dir, filepath.Join(process, "cwd")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(process, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(process, 0o700) })
+	pids, err := survivorsIn(root, dir)
+	if err != nil || len(pids) != 0 {
+		t.Fatalf("a process the daemon may not inspect: %v, %v", pids, err)
 	}
 }
 
