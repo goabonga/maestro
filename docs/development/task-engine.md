@@ -193,3 +193,24 @@ transitions with their reasons and revisions (`maestro task show`), the
 worker's events with the task and turn they are about
 (`maestro worker show`), the turns and their events, the accepted
 artifacts and the consumed budgets.
+
+## In the daemon
+
+`maestro-svc` runs one engine on its state database, with its project
+store, its worker supervisor as `Sessions` (the [live
+sessions](workers.md#live-sessions) of the started workers) and, on a
+host that can confine, its test runner as `Tester`. It calls `Drive` in
+the background (`cmd/svc/engine.go`):
+
+- for every registered project after each `POST` request to a task
+  route — a creation, a resume, a cancellation or a configuration
+  update — once it is answered;
+- for the project of a started worker once it becomes `IDLE`
+  (`Supervisor.Ready`);
+- for every registered project when it starts, then every minute, so
+  an input wait past its bound is noticed without any request.
+
+A `Drive` failure is printed with its project. When the daemon stops,
+its context ends every `Drive`: a turn in progress is interrupted, its
+worker failed and its task blocked with its continuation, before the
+supervisor stops the workers and the store closes.
