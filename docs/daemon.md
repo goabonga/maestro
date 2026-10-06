@@ -39,8 +39,9 @@ on its own:
 
 - a worker that held a turn becomes `FAILED` and keeps that turn, and
   the turn's task is blocked with the worker's reason;
-- a worker with processes still working in its repository becomes
-  `FAILED`, so that two runtimes never share one workspace;
+- a worker with processes still working in its repository or in its
+  own directory, where its session runs, becomes `FAILED`, so that two
+  runtimes never share one workspace;
 - any other worker that was running is `STOPPED`; a paused worker stays
   `PAUSED`.
 
