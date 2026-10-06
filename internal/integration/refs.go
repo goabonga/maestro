@@ -232,6 +232,7 @@ func (s Store) ApplyIntegration(project worktree.Project, id, resultSHA string) 
 	if err := CreateResultRef(project.Repository(), id, resultSHA); err != nil {
 		return op, err
 	}
+	crashHook(crashApplyRef)
 	proven, ok, err := ProveResult(project, op)
 	switch {
 	case err != nil:

@@ -127,6 +127,7 @@ func (s Store) RollBackIntegration(project worktree.Project, id, cause string) (
 		if op, err = s.Fail(id, cause); err != nil {
 			return op, err
 		}
+		crashHook(crashRollBackFailed)
 	}
 	branch, err := publicationBranch(project)
 	if err != nil {
@@ -212,10 +213,12 @@ func (s Store) Publish(project worktree.Project, id string) (Operation, error) {
 			ErrBranchMoved, IntegrationBranch, branch, id, op.IntegrationBaseSHA)
 	}
 
+	crashHook(crashPublishBranch)
 	committed, err := s.publicationFinalize(tasks, op, pass)
 	if err != nil {
 		return op, err
 	}
+	crashHook(crashPublishCommitted)
 	if err := RefreshIntegrationView(project); err != nil {
 		return committed, fmt.Errorf("operation %s committed: %w", id, err)
 	}

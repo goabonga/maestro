@@ -129,12 +129,15 @@ func (s Store) PublishToUser(project worktree.Project) (Publication, error) {
 	if err != nil {
 		return Publication{}, err
 	}
+	crashHook(crashUserPrepared)
 	if op, err = s.Start(op.ID, "publish to "+UserPublishRef+" of "+project.UserRepository); err != nil {
 		return Publication{}, err
 	}
+	crashHook(crashUserStarted)
 	if err := userPublishTransfer(project, target); err != nil {
 		return Publication{}, s.publicationAbandon(op, err)
 	}
+	crashHook(crashUserTransferred)
 	if err := publicationCheckedOut(project.UserRepository); err != nil {
 		return Publication{}, s.publicationAbandon(op, err)
 	}
@@ -146,6 +149,7 @@ func (s Store) PublishToUser(project worktree.Project) (Publication, error) {
 		}
 		return Publication{}, s.publicationAbandon(op, err)
 	}
+	crashHook(crashUserBranch)
 	op, err = s.publicationFinish(project, op)
 	if err != nil {
 		return Publication{}, err
@@ -217,6 +221,7 @@ func (s Store) publicationRollBack(op Operation, cause string) error {
 		if _, err := s.Fail(op.ID, cause); err != nil {
 			return err
 		}
+		crashHook(crashUserFailed)
 	}
 	_, err := s.RollBack(op.ID, UserPublishRef+" left untouched")
 	return err
@@ -231,6 +236,7 @@ func (s Store) publicationFinish(project worktree.Project, op Operation) (Operat
 		if op, err = s.RecordResult(op.ID, op.SourceHeadSHA); err != nil {
 			return op, err
 		}
+		crashHook(crashUserApplied)
 	}
 	evidence, err := s.publicationEvidence(project, op)
 	if err != nil {
