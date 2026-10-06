@@ -44,6 +44,7 @@ func VerifyCommits(repository string, envelope Envelope, payload ImplementationP
 // git runs one read-only git command in a repository.
 func git(repository string, args ...string) (string, error) {
 	command := exec.Command("git", append([]string{"-C", repository}, args...)...) // #nosec G204 -- arguments are validated object ids and fixed verbs, never task text
+	command.Env = gitEnvironment()
 	output, err := command.Output()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
