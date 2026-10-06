@@ -19,6 +19,9 @@ import (
 // immutable once persisted.
 var ErrDuplicate = errors.New("artifact already accepted")
 
+// ErrNone reports a task without any accepted artifact of a kind.
+var ErrNone = errors.New("no accepted artifact")
+
 // Stored is an accepted artifact.
 type Stored struct {
 	Envelope   Envelope
@@ -79,4 +82,19 @@ func Load(db *state.DB, artifactID string) (Stored, error) {
 		return Stored{}, err
 	}
 	return stored, nil
+}
+
+// Latest returns the artifact of a kind last accepted for a task. A
+// task without one fails with ErrNone.
+func Latest(db *state.DB, taskID string, kind Kind) (Stored, error) {
+	var artifactID string
+	err := db.QueryRow(`SELECT artifact_id FROM artifacts WHERE task_id = ? AND kind = ?
+		ORDER BY rowid DESC LIMIT 1`, taskID, string(kind)).Scan(&artifactID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Stored{}, fmt.Errorf("%w: %s for task %s", ErrNone, kind, taskID)
+	}
+	if err != nil {
+		return Stored{}, err
+	}
+	return Load(db, artifactID)
 }
