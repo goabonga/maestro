@@ -80,7 +80,7 @@ type crashCase struct {
 
 // crashAllFlows returns every flow of the harness.
 func crashAllFlows() []crashFlow {
-	return crashIntegrationFlows()
+	return append(crashIntegrationFlows(), crashSyncFlows()...)
 }
 
 // TestCrashChild is the child process of the crash injection tests; it
