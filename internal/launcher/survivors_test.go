@@ -92,6 +92,45 @@ func TestSurvivorsOfAMissingDirectoryAreNone(t *testing.T) {
 	}
 }
 
+func TestSurvivorsFindAProcessInARemovedDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "repository")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inside := sleeper(t, dir)
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	pids, err := Survivors(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(pids, inside) {
+		t.Fatalf("survivors %v of the removed directory miss %d", pids, inside)
+	}
+}
+
+func TestSurvivorsFindAProcessInARecreatedDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "repository")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inside := sleeper(t, dir)
+	if err := os.Remove(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pids, err := Survivors(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(pids, inside) {
+		t.Fatalf("survivors %v of the recreated directory miss %d", pids, inside)
+	}
+}
+
 func TestSurvivorsLeaveTheDaemonOut(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

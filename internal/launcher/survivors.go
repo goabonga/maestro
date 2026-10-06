@@ -16,13 +16,18 @@ import (
 // procRoot is the process table Survivors reads.
 const procRoot = "/proc"
 
+// deletedSuffix is what the kernel appends to the working directory of
+// a process whose directory was removed.
+const deletedSuffix = " (deleted)"
+
 // Survivors lists the processes visible to the daemon whose working
 // directory is dir or lies below it, by PID in ascending order. A
 // confined group binds its workspace at the same path and works in it,
 // so its processes show that path from the host. The list only
 // observes: it proves no membership in any supervised group, and a
 // caller never signals a process found here. The daemon's own process
-// is left out; a directory that does not exist has no survivor.
+// is left out. A directory that was removed, or removed and created
+// again, still has the processes that kept working in it.
 func Survivors(dir string) ([]int, error) {
 	return survivorsIn(procRoot, dir)
 }
@@ -37,10 +42,7 @@ func survivorsIn(root, dir string) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
+	resolved, err := resolve(absolute)
 	if err != nil {
 		return nil, err
 	}
@@ -61,12 +63,31 @@ func survivorsIn(root, dir string) ([]int, error) {
 		if err != nil {
 			continue
 		}
-		if within(cwd, resolved) {
+		if within(strings.TrimSuffix(cwd, deletedSuffix), resolved) {
 			pids = append(pids, pid)
 		}
 	}
 	sort.Ints(pids)
 	return pids, nil
+}
+
+// resolve resolves the symbolic links of an absolute path. A path that
+// does not exist is resolved up to its deepest existing ancestor, the
+// way the kernel still names a removed working directory.
+func resolve(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return resolved, err
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return path, nil
+	}
+	base, err := resolve(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, filepath.Base(path)), nil
 }
 
 // within reports whether path is dir or lies below it.
