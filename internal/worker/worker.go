@@ -6,7 +6,8 @@
 // transition table is the single authority on which event moves a
 // worker from which state to which; guards are fed by explicit facts
 // the caller asserts. The store persists each transition with its event
-// in one compare-and-set transaction.
+// in one compare-and-set transaction, and the supervisor starts and
+// stops the workers' confined agent sessions.
 package worker
 
 import (
