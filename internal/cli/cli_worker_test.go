@@ -6,12 +6,17 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goabonga/maestro/internal/ipc"
+	"github.com/goabonga/maestro/internal/launcher"
+	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/task"
 	"github.com/goabonga/maestro/internal/transport"
@@ -25,6 +30,13 @@ import (
 // repository. It returns the server, the socket, the repository and its
 // project.
 func workerDaemon(t *testing.T) (*ipc.Server, string, string, worktree.Project) {
+	t.Helper()
+	return workerDaemonWith(t, func(*ipc.Server) {})
+}
+
+// workerDaemonWith is workerDaemon with the server configured before it
+// serves.
+func workerDaemonWith(t *testing.T, configure func(*ipc.Server)) (*ipc.Server, string, string, worktree.Project) {
 	t.Helper()
 	data := t.TempDir()
 	t.Setenv("MAESTRO_DATA_HOME", data)
@@ -49,6 +61,7 @@ func workerDaemon(t *testing.T) (*ipc.Server, string, string, worktree.Project) 
 	}
 	server := &ipc.Server{DB: db, Store: store, Service: "maestro-svc", Version: "0.0.0",
 		Tasks: &task.Store{DB: db}, Workers: &worker.Store{DB: db}}
+	configure(server)
 	web := &http.Server{Handler: server.Handler()}
 	go func() { _ = web.Serve(listener) }()
 	t.Cleanup(func() { _ = web.Close() })
@@ -162,12 +175,12 @@ func TestWorkerCommandsTakeAnExplicitProject(t *testing.T) {
 func TestWorkerCommandErrors(t *testing.T) {
 	_, socket, repo, project := workerDaemon(t)
 	t.Chdir(repo)
-	for _, args := range [][]string{nil, {"show"}, {"list", "extra"}, {"show", "a", "b"}} {
+	for _, args := range [][]string{nil, {"show"}, {"list", "extra"}, {"show", "a", "b"}, {"start"}, {"stop"}, {"start", "a", "b"}} {
 		if _, err := runWorker(t, args...); err == nil || !strings.Contains(err.Error(), "usage: maestro worker") {
 			t.Fatalf("args %v: %v", args, err)
 		}
 	}
-	if _, err := runWorker(t, "start", "x"); err == nil || !strings.Contains(err.Error(), "unknown worker command") {
+	if _, err := runWorker(t, "pause", "x"); err == nil || !strings.Contains(err.Error(), "unknown worker command") {
 		t.Fatalf("unknown command: %v", err)
 	}
 	if _, err := runWorker(t, "show", "missing", "--socket", socket); err == nil || !strings.Contains(err.Error(), "not_found") {
@@ -179,5 +192,94 @@ func TestWorkerCommandErrors(t *testing.T) {
 	}
 	if output, err := runWorker(t, "list", "--help"); err != nil || !strings.Contains(output, "-project") {
 		t.Fatalf("help: %q %v", output, err)
+	}
+}
+
+func TestWorkerStartRefusesInvalidCounts(t *testing.T) {
+	_, socket, repo, _ := workerDaemon(t)
+	t.Chdir(repo)
+	if _, err := runWorker(t, "start", "claude-code", "--count", "0", "--socket", socket); err == nil || !strings.Contains(err.Error(), "--count must be at least 1") {
+		t.Fatalf("count 0: %v", err)
+	}
+	if _, err := runWorker(t, "list", "--count", "2", "--socket", socket); err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("count on list: %v", err)
+	}
+	if _, err := runWorker(t, "start", "claude-code", "--socket", socket); err == nil || !strings.Contains(err.Error(), "this daemon does not start workers") {
+		t.Fatalf("a daemon without supervisor: %v", err)
+	}
+}
+
+// Fixture agents: each answers --version on the host like the real CLI.
+const (
+	// claudeFixture records its chosen session in its private
+	// configuration, as Claude Code does, then waits on its terminal.
+	claudeFixture = `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.289 (Claude Code)"; exit 0; fi
+mkdir -p "$CLAUDE_CONFIG_DIR/projects/fixture"
+printf '{"sessionId":"%s","cwd":"%s","version":"2.1.289"}\n' "$2" "$PWD" > "$CLAUDE_CONFIG_DIR/projects/fixture/$2.jsonl"
+exec cat
+`
+	// crashingCodex exits before recording any session.
+	crashingCodex = `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex-cli 0.160.0"; exit 0; fi
+exit 3
+`
+)
+
+func TestWorkerStartAndStopFollowTheWorkers(t *testing.T) {
+	confined, err := launcher.New()
+	if errors.Is(err, launcher.ErrUnsupported) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	for name, script := range map[string]string{"claude": claudeFixture, "codex": crashingCodex} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o700); err != nil { // #nosec G306 -- an executable fixture
+			t.Fatal(err)
+		}
+	}
+	_, socket, repo, _ := workerDaemonWith(t, func(server *ipc.Server) {
+		capacity, err := scheduler.NewCapacity(2, 1, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server.Capacity = capacity
+		server.Supervisor = &worker.Supervisor{
+			Store: *server.Workers, Projects: server.Store, Capacity: capacity, Launcher: confined,
+			LookPath:     func(name string) (string, error) { return filepath.Join(bin, name), nil },
+			StartTimeout: 15 * time.Second, StopGrace: 200 * time.Millisecond,
+		}
+		t.Cleanup(server.Supervisor.Close)
+	})
+	t.Chdir(repo)
+
+	output, err := runWorker(t, "start", "codex", "--socket", socket)
+	if err == nil || !strings.Contains(err.Error(), "1 of 1 workers failed to start") ||
+		!strings.Contains(output, "codex-01: FAILED: start failed:") || !strings.Contains(output, "exited with code 3") {
+		t.Fatalf("output %q, error %v", output, err)
+	}
+
+	output, err = runWorker(t, "start", "claude-code", "--count", "2", "--socket", socket)
+	if err != nil {
+		t.Fatalf("start: %v: %s", err, output)
+	}
+	for _, want := range []string{"starting claude-code-01 (claude-code, driver claude-code-2.1)", "starting claude-code-02",
+		"claude-code-01: IDLE", "claude-code-02: IDLE"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("start misses %q: %s", want, output)
+		}
+	}
+	if _, err := runWorker(t, "start", "claude-code", "--socket", socket); err == nil || !strings.Contains(err.Error(), "capacity exhausted") {
+		t.Fatalf("a start above capacity: %v", err)
+	}
+
+	output, err = runWorker(t, "stop", "claude-code-01", "--socket", socket)
+	if err != nil || output != "claude-code-01: STOPPED\n" {
+		t.Fatalf("output %q, error %v", output, err)
+	}
+	if _, err := runWorker(t, "stop", "claude-code-01", "--socket", socket); err == nil || !strings.Contains(err.Error(), "conflict") {
+		t.Fatalf("a stopped worker was stopped again: %v", err)
 	}
 }
