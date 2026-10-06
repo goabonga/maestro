@@ -28,7 +28,8 @@ modified behind your back.
   [Project initialization](docs/initialization.md)
 - **Runs one daemon per user** (`maestro daemon start|stop|status`) on a
   private Unix socket; `maestro status` shows the machine-wide capacity it
-  enforces. [Running the daemon](docs/daemon.md)
+  enforces. At each start it reconciles the recorded workers with the
+  sessions lost by the previous daemon. [Running the daemon](docs/daemon.md)
 - **Records tasks** (`maestro task new|show|list|cancel|resume` and
   `maestro task config update`): each task is frozen with the
   configuration and instruction files it was created with, starts from
