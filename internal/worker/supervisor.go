@@ -103,11 +103,29 @@ type Supervisor struct {
 type liveKey struct{ project, name string }
 
 // running is the live session of a started worker. Its fields but the
-// immutable ones are guarded by the supervisor's mutex.
+// immutable ones, turn and role are guarded by the supervisor's mutex.
 type running struct {
 	epoch  *session.Epoch
 	native *agent.NativeSession
 	slot   *scheduler.Slot
+	// project, repository, workTree, runtime, kind, binary and
+	// agentConfig are what the session is driven and resumed with.
+	project     worktree.Project
+	repository  worktree.Worker
+	workTree    string
+	runtime     provision.RuntimePaths
+	kind        string
+	binary      string
+	agentConfig config.Agent
+	// detector follows the turns through the worker's driver.
+	detector *agent.TurnDetector
+	// turn serializes the changes of rights with the teardown; role,
+	// guarded by it, is the role of the current permissions profile.
+	turn sync.Mutex
+	role session.Role
+	// replacing is closed once a change of rights in progress has
+	// stopped the group and resumed it, or failed to.
+	replacing chan struct{}
 	// stopping marks a session taken over for termination: its watcher
 	// then only releases its slot once the group is gone.
 	stopping bool
@@ -352,7 +370,8 @@ func (s *Supervisor) abandon(key liveKey, live *running, reason string) {
 
 // boot provisions the worker's private repository, worktree, native
 // files and private HOME, starts the agent in a confined PTY through its
-// driver, watches its session and waits for its native session to be
+// driver, with its worktree and private repository read only until its
+// first turn, watches its session and waits for its native session to be
 // confirmed. A failure once the session started returns the session with
 // the error, for its termination.
 func (s *Supervisor) boot(key liveKey, plan launchPlan) (*running, error) {
@@ -378,7 +397,8 @@ func (s *Supervisor) boot(key liveKey, plan launchPlan) (*running, error) {
 	if err != nil {
 		return nil, fmt.Errorf("worktree: %w", err)
 	}
-	if _, err := provision.Instructions(workTree, kind, "", plan.snapshot.Instructions); err != nil {
+	provisioned, err := provision.Instructions(workTree, kind, "", plan.snapshot.Instructions)
+	if err != nil {
 		return nil, fmt.Errorf("instruction files: %w", err)
 	}
 	if err := writeMCP(home, plan.snapshot.Config.MCP, plan.worker.Agent, kind); err != nil {
@@ -421,8 +441,14 @@ func (s *Supervisor) boot(key liveKey, plan launchPlan) (*running, error) {
 		return nil, err
 	}
 	profile, err := session.NewProfile(session.ProfileSpec{
-		Epoch: 1, Role: session.Coding, Revision: head, Config: session.Config{Spec: spec}, GitDir: repository.Dir,
+		Epoch: 1, Role: session.Review, Revision: head, Config: session.Config{Spec: spec}, GitDir: repository.Dir,
 	})
+	if err != nil {
+		_ = native.Close()
+		return nil, err
+	}
+	detector, err := agent.NewTurnDetector(kind, plan.installed.Version,
+		agent.DetectorConfig{TurnTimeout: detectorBound, InputWaitTimeout: detectorBound})
 	if err != nil {
 		_ = native.Close()
 		return nil, err
@@ -432,7 +458,12 @@ func (s *Supervisor) boot(key liveKey, plan launchPlan) (*running, error) {
 		_ = native.Close()
 		return nil, err
 	}
-	live := &running{epoch: epoch, native: native, slot: plan.slot}
+	live := &running{
+		epoch: epoch, native: native, slot: plan.slot, project: plan.project, repository: repository,
+		workTree: workTree, runtime: provisioned, kind: kind, binary: binary,
+		agentConfig: plan.snapshot.Config.Agents[plan.worker.Agent], detector: detector, role: session.Review,
+	}
+	s.follow(live, epoch.Session())
 	s.watchers.Add(1)
 	go s.watch(key, live)
 	if err := s.confirm(epoch, confirm); err != nil {
@@ -509,13 +540,28 @@ func writeMCP(home string, servers map[string]config.MCP, agentName, kind string
 }
 
 // watch waits for a session's group to end, then releases its slot: the
-// group is gone, so the slot no longer counts. A started worker whose
+// group is gone, so the slot no longer counts. A group stopped by a
+// change of rights is followed by the one that resumes the conversation,
+// if it started. A started worker whose
 // session ends on its own is moved to FAILED; until that failure is
 // recorded, the worker is marked failing, so that no Stop moves it to
 // STOPPED and no Start reuses its name meanwhile.
 func (s *Supervisor) watch(key liveKey, live *running) {
 	defer s.watchers.Done()
-	live.epoch.Session().Wait()
+	for {
+		current := live.epoch.Session()
+		current.Wait()
+		s.mu.Lock()
+		replacing := live.replacing
+		s.mu.Unlock()
+		if replacing == nil {
+			break
+		}
+		<-replacing
+		if live.epoch.Session() == current {
+			break
+		}
+	}
 	s.mu.Lock()
 	live.ended = true
 	if s.ending[key] == live {
@@ -573,8 +619,11 @@ func (s *Supervisor) end(live *running) error {
 }
 
 // teardown terminates a live session's confined group and releases its
-// native session ownership.
+// native session ownership, once any change of rights in progress is
+// over.
 func (s *Supervisor) teardown(live *running) error {
+	live.turn.Lock()
+	defer live.turn.Unlock()
 	end := live.epoch.End("stop", s.grace(), func(session.Boundary) error { return nil })
 	return errors.Join(end, live.native.Close())
 }
