@@ -11,12 +11,17 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/transport"
+	"github.com/goabonga/maestro/internal/worker"
+	"github.com/goabonga/maestro/internal/worktree"
 )
 
 func shortDir(t *testing.T) string {
@@ -368,5 +373,94 @@ func TestRunServesWorkers(t *testing.T) {
 	cancel()
 	if err := <-finished; err != nil {
 		t.Fatalf("daemon stopped with %v", err)
+	}
+}
+
+func TestRunReconcilesTheRecordedWorkersBeforeServing(t *testing.T) {
+	base := shortDir(t)
+	t.Setenv("MAESTRO_DATA_HOME", base)
+	project := worktree.Project{ID: "project-1", Dir: filepath.Join(base, "projects", "project-1")}
+	if err := os.MkdirAll(project.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project.Dir, "project.json"), []byte(`{"id":"project-1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := state.Open(filepath.Join(base, "maestro.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(state.Migrations); err != nil {
+		t.Fatal(err)
+	}
+	workers := worker.Store{DB: db}
+	for _, name := range []string{"lost", "survived"} {
+		if _, err := workers.Register(project, worker.Spec{
+			Name: name, Agent: "claude", AgentKind: "claude-code", Driver: "claude-code-2.1",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for _, in := range []worker.Input{
+			{Event: worker.Start, Guard: worker.Guard{CapacityReserved: true}},
+			{Event: worker.Ready, Guard: worker.Guard{SessionReady: true, ProfileConfirmed: true}},
+		} {
+			if _, err := workers.Transition(project.ID, name, in); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	_ = db.Close()
+	// A fixture process still works in the repository of one worker.
+	repository := project.WorkerRepository("survived")
+	if err := os.MkdirAll(repository, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	survivor := exec.Command("sleep", "30")
+	survivor.Dir = repository
+	if err := survivor.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = survivor.Process.Kill()
+		_ = survivor.Wait()
+	}()
+
+	socket := filepath.Join(shortDir(t), "svc.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	var output bytes.Buffer
+	go func() { finished <- run(ctx, []string{"--socket", socket}, &output) }()
+	waitForSocket(t, socket, finished)
+	cancel()
+	if err := <-finished; err != nil {
+		t.Fatalf("daemon stopped with %v", err)
+	}
+
+	db, err = state.Open(filepath.Join(base, "maestro.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	workers = worker.Store{DB: db}
+	lost, err := workers.Get(project.ID, "lost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	survived, err := workers.Get(project.ID, "survived")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lost.State != worker.Stopped || survived.State != worker.Failed {
+		t.Fatalf("lost %s, survived %s", lost.State, survived.State)
+	}
+	pid := strconv.Itoa(survivor.Process.Pid)
+	if !strings.Contains(survived.Reason, pid) {
+		t.Fatalf("reason %q does not name survivor %s", survived.Reason, pid)
+	}
+	report := output.String()
+	if !strings.Contains(report, "worker project-1/lost: IDLE -> STOPPED") ||
+		!strings.Contains(report, "worker project-1/survived: IDLE -> FAILED") {
+		t.Fatalf("report %q", report)
 	}
 }

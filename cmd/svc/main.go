@@ -36,8 +36,9 @@ func main() {
 	}
 }
 
-// run parses the daemon flags, then starts it: migrate the store under
-// the user lock, bind the socket, serve until the context ends.
+// run parses the daemon flags, then starts it: migrate the store and
+// reconcile the recorded workers under the user lock, bind the socket,
+// serve until the context ends.
 func run(ctx context.Context, args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("maestro-svc", flag.ContinueOnError)
 	flags.SetOutput(output)
@@ -91,6 +92,12 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 		_ = lock.Release()
 		return err
 	}
+	// The runtimes of a previous daemon are lost: the recorded workers
+	// are reconciled before any request can reach them.
+	if err := reconcileWorkers(store, db, output); err != nil {
+		_ = lock.Release()
+		return err
+	}
 	listener, err := transport.Listen(*socket)
 	if err != nil {
 		_ = lock.Release()
@@ -118,4 +125,32 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	// store closes.
 	server.Wait()
 	return err
+}
+
+// reconcileWorkers reconciles the recorded workers of every registered
+// project with this freshly started daemon, searching each worker's
+// repository for surviving processes, and reports every worker it moved
+// or found survivors for.
+func reconcileWorkers(store worktree.Store, db *state.DB, output io.Writer) error {
+	projects, err := store.Projects()
+	if err != nil {
+		return err
+	}
+	workers := worker.Store{DB: db}
+	for _, project := range projects {
+		outcomes, err := workers.Reconcile(project.ID, launcher.Survivors)
+		if err != nil {
+			return fmt.Errorf("reconcile the workers of project %s: %w", project.ID, err)
+		}
+		for _, outcome := range outcomes {
+			if outcome.Reason == "" {
+				continue
+			}
+			if _, err := fmt.Fprintf(output, "worker %s/%s: %s -> %s: %s\n",
+				project.ID, outcome.Name, outcome.From, outcome.To, outcome.Reason); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
