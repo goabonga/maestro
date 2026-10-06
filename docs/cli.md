@@ -51,6 +51,8 @@ Commands that reach the daemon accept `--socket <path>`.
 | --- | --- |
 | `maestro worker list` | Lists the project's workers by name: agent, driver, state and current assignment. [Worker registry](development/workers.md) |
 | `maestro worker show <name>` | Shows a worker, its current assignment and its recent events. |
+| `maestro worker start <agent> [--count <n>]` | Starts `n` workers (default 1) of an agent in confined sessions, bounded by the daemon's session ceiling, and waits until each one is `IDLE` or `FAILED`. [Starting and stopping](development/workers.md#starting-and-stopping) |
+| `maestro worker stop <name>` | Drains a worker and terminates its session; it ends `STOPPED`. |
 
 ## Your repository
 
