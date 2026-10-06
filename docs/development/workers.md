@@ -195,6 +195,10 @@ returns once every group is gone, or after `CloseTimeout` (ten seconds
 by default) when a group could not be terminated. `maestro-svc` calls it
 when it shuts down.
 
+`Supervisor.Ready`, when set, is called with the project of every
+started worker once it reaches `IDLE`; a worker whose start fails is not
+reported. `maestro-svc` drives the project's tasks from it.
+
 ## Live sessions
 
 `Supervisor.Session(project, name)` returns the live session of a
