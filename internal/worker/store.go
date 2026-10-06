@@ -144,6 +144,13 @@ func (s Store) Transition(projectID, workerName string, in Input) (Worker, error
 	if err != nil {
 		return Worker{}, err
 	}
+	return s.transitionFrom(current, in)
+}
+
+// transitionFrom applies one event to a worker as it was read: the
+// transition is stored only if the worker is still at current's state
+// and version, and fails with ErrTransition otherwise.
+func (s Store) transitionFrom(current Worker, in Input) (Worker, error) {
 	at := s.now()
 	next, err := Apply(current, in, at)
 	if err != nil {
