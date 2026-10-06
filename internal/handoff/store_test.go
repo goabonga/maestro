@@ -52,3 +52,40 @@ func TestAcceptPersistsImmutably(t *testing.T) {
 		t.Fatalf("the accepted artifact changed: %+v %v", reloaded, err)
 	}
 }
+
+func TestLatestReturnsTheLastAcceptedArtifactOfAKind(t *testing.T) {
+	db, err := state.Open(filepath.Join(t.TempDir(), "maestro.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(state.Migrations); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Latest(db, "task-1", Plan); !errors.Is(err, ErrNone) {
+		t.Fatalf("no plan yet: %v", err)
+	}
+	for _, id := range []string{"art-1", "art-2"} {
+		data := planDocument(t, func(e map[string]any) { e["artifact_id"] = id })
+		envelope, _, err := Decode(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Accept(db, envelope, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	latest, err := Latest(db, "task-1", Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Envelope.ArtifactID != "art-2" {
+		t.Fatalf("latest plan %s", latest.Envelope.ArtifactID)
+	}
+	if _, err := Latest(db, "task-1", Review); !errors.Is(err, ErrNone) {
+		t.Fatalf("no review: %v", err)
+	}
+	if _, err := Latest(db, "task-2", Plan); !errors.Is(err, ErrNone) {
+		t.Fatalf("another task: %v", err)
+	}
+}
