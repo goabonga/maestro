@@ -123,6 +123,7 @@ func (s Store) BuildCandidate(project worktree.Project, id string, runtime provi
 		if op, err = s.Start(id, "build candidate"); err != nil {
 			return op, err
 		}
+		crashHook(crashBuildStarted)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return s.candidateFail(op, err)
@@ -130,10 +131,12 @@ func (s Store) BuildCandidate(project worktree.Project, id string, runtime provi
 	if _, err := repoGit(repository, "", nil, "worktree", "add", "--detach", "--quiet", path, op.IntegrationBaseSHA); err != nil {
 		return s.candidateFail(op, err)
 	}
+	crashHook(crashBuildWorktree)
 	tree, err := candidateApply(path, op.SourceCommits)
 	if err != nil {
 		return s.candidateFail(op, err)
 	}
+	crashHook(crashBuildChain)
 	baseTree, err := candidateGit(path, "rev-parse", "--verify", "--end-of-options", op.IntegrationBaseSHA+"^{tree}")
 	if err != nil {
 		return s.candidateFail(op, err)
@@ -148,6 +151,7 @@ func (s Store) BuildCandidate(project worktree.Project, id string, runtime provi
 	if op, err = s.RecordCandidate(id, "", tree); err != nil {
 		return s.candidateFail(op, err)
 	}
+	crashHook(crashBuildRecorded)
 	want, err := op.expected()
 	if err != nil {
 		return s.candidateFail(op, err)
@@ -156,9 +160,11 @@ func (s Store) BuildCandidate(project worktree.Project, id string, runtime provi
 	if err != nil {
 		return s.candidateFail(op, err)
 	}
+	crashHook(crashBuildResult)
 	if op, err = s.ApplyIntegration(project, id, result); err != nil {
 		return s.candidateFail(op, err)
 	}
+	crashHook(crashBuildApplied)
 	if err := candidateRemove(repository, path, result); err != nil {
 		return op, fmt.Errorf("remove candidate worktree: %w", err)
 	}

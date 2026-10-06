@@ -166,6 +166,7 @@ func (s Syncer) Run(plan SyncPlan) (Operation, error) {
 	if err != nil {
 		return op, err
 	}
+	crashHook(crashSyncStarted)
 	if err := s.syncApply(plan); err != nil {
 		return s.syncAbort(id, err)
 	}
@@ -178,6 +179,7 @@ func (s Syncer) Run(plan SyncPlan) (Operation, error) {
 		}
 		return s.syncAbort(id, err)
 	}
+	crashHook(crashSyncBranch)
 	// The integration branch has moved: the operation is never rolled
 	// back from here, only committed.
 	return s.Store.Commit(id, Evidence{})
@@ -194,6 +196,7 @@ func (s Syncer) syncApply(plan SyncPlan) error {
 		plan.SyncedSHA+":"+ref); err != nil {
 		return fmt.Errorf("import %s: %w", plan.SyncedSHA, err)
 	}
+	crashHook(crashSyncImported)
 	imported, err := repoGit(repository, "", nil, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	if err != nil || strings.TrimSpace(imported) != plan.SyncedSHA {
 		return fmt.Errorf("%w: %s does not hold %s", ErrInvalidResult, ref, plan.SyncedSHA)
@@ -213,19 +216,26 @@ func (s Syncer) syncApply(plan SyncPlan) error {
 	if _, err := s.Store.RecordCandidate(id, ref, strings.TrimSpace(tree)); err != nil {
 		return err
 	}
+	crashHook(crashSyncRecorded)
 	if err := CreateResultRef(repository, id, plan.SyncedSHA); err != nil {
 		return err
 	}
+	crashHook(crashSyncRef)
 	op, err := s.Store.RecordResult(id, plan.SyncedSHA)
 	if err != nil {
 		return err
 	}
+	crashHook(crashSyncApplied)
 	reports, err := s.syncTest(plan, op)
 	if err != nil {
 		return err
 	}
-	_, err = s.Store.MarkTested(id, Evidence{TestReportIDs: reports})
-	return err
+	crashHook(crashSyncReports)
+	if _, err = s.Store.MarkTested(id, Evidence{TestReportIDs: reports}); err != nil {
+		return err
+	}
+	crashHook(crashSyncTested)
+	return nil
 }
 
 // syncTest runs the configured tests on the imported commit in a clone
@@ -274,6 +284,7 @@ func (s Syncer) syncAbort(id string, cause error) (Operation, error) {
 	if err != nil {
 		return op, errors.Join(cause, err)
 	}
+	crashHook(crashSyncFailed)
 	if op, err = s.Store.RollBack(id, "the integration branch was not moved"); err != nil {
 		return op, errors.Join(cause, err)
 	}
