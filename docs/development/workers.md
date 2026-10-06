@@ -259,6 +259,14 @@ persisted PID is trusted and the search proves no membership in a
 supervised group: a process it finds is an unidentified survivor, never
 a process to stop.
 
+A repository that was removed, or removed and created again, still has
+the processes that kept working in it: the kernel names their working
+directory `<path> (deleted)`, and the search matches it. A process that
+ends during the search is skipped, and so is a process the daemon is
+not permitted to inspect, such as one of another user or one that is
+not dumpable: its working directory is hidden from the search. Any
+other failure to read a working directory is a failed search.
+
 | Recorded worker | Found | Decision |
 | --- | --- | --- |
 | any active state | survivors, or a failed search | `fail`; the reason names the processes or the error |
