@@ -235,8 +235,10 @@ confirm its sandbox again; the old PTY stays fenced. Live-output clients
 subscribe to the new PTY explicitly.
 
 These are session primitives, exercised with confined fixture processes.
-The daemon does not yet wire worker assignments, native agent ID discovery,
-Git/handoff persistence or human-pilot ownership into them. A caller must
+The daemon uses them to start and stop workers, with native agent ID
+discovery ([Worker registry](workers.md#starting-and-stopping)); it does
+not yet wire worker assignments, Git/handoff persistence or human-pilot
+ownership into them. A caller must
 supply the reconciler and the exact-ID resume driver; there is no default
 no-op reconciler or latest-session fallback. Tests prove descendant writes
 cease before reconciliation, read-only review/repair, writable private state
