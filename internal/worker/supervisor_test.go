@@ -820,3 +820,28 @@ func TestSupervisorRegistersNothingWhenAStartIsRefused(t *testing.T) {
 		t.Fatalf("a refused start kept %d slots", h.sessionsUsed())
 	}
 }
+
+func TestSupervisorStopsAFailedWorkerThatHoldsAnAssignment(t *testing.T) {
+	e := fixture(t)
+	register(t, e, "claude-01")
+	step(t, e, "claude-01",
+		Input{Event: Start, Guard: Guard{CapacityReserved: true}},
+		Input{Event: Ready, Guard: Guard{SessionReady: true, ProfileConfirmed: true}},
+		e.assign(e.turns[0]),
+		Input{Event: Fail, Reason: "the turn failed"})
+	supervisor := &Supervisor{Store: e.store}
+	stopped, err := supervisor.Stop(e.project.ID, "claude-01")
+	if err != nil || stopped.State != Stopped || stopped.Assignment != nil {
+		t.Fatalf("stop: %+v %v", stopped, err)
+	}
+
+	// A live worker holding an assignment is still refused.
+	register(t, e, "claude-02")
+	step(t, e, "claude-02",
+		Input{Event: Start, Guard: Guard{CapacityReserved: true}},
+		Input{Event: Ready, Guard: Guard{SessionReady: true, ProfileConfirmed: true}},
+		e.assign(e.turns[1]))
+	if busy, err := supervisor.Stop(e.project.ID, "claude-02"); !errors.Is(err, ErrTransition) || busy.State != Busy {
+		t.Fatalf("a busy worker was stopped: %+v %v", busy, err)
+	}
+}

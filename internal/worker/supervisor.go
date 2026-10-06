@@ -595,9 +595,10 @@ func (s *Supervisor) fail(projectID, name, reason string) {
 // Stop stops a worker. A live worker is drained — DRAINING, so it takes
 // no new assignment — then its confined group is terminated, its slot
 // released, and it reaches STOPPED. A FAILED worker is moved to STOPPED
-// once its group is gone: the termination of a group a previous teardown
-// failed on is retried first. A worker that is starting, already
-// stopped, holding an assignment, already being stopped by another Stop
+// once its group is gone, releasing the assignment it kept: the
+// termination of a group a previous teardown failed on is retried first.
+// A worker that is starting, already stopped, live and holding an
+// assignment, already being stopped by another Stop
 // or whose session is being torn down without a Stop is refused with
 // ErrTransition. A group that cannot be terminated
 // leaves the worker FAILED and keeps its slot until the group is gone.
@@ -630,8 +631,6 @@ func (s *Supervisor) Stop(projectID, name string) (Worker, error) {
 		return Worker{}, err
 	}
 	switch {
-	case current.Assignment != nil:
-		return current, fmt.Errorf("%w: %s holds an assignment", ErrTransition, name)
 	case current.State == Stopped:
 		return current, fmt.Errorf("%w: %s is already stopped", ErrTransition, name)
 	case current.State == Starting:
@@ -648,6 +647,8 @@ func (s *Supervisor) Stop(projectID, name string) (Worker, error) {
 		return s.Store.Transition(projectID, name, Input{
 			Event: Stop, Reason: "stopped by the user", Guard: Guard{Reconciled: true},
 		})
+	case current.Assignment != nil:
+		return current, fmt.Errorf("%w: %s holds an assignment", ErrTransition, name)
 	}
 	if current.State != Draining {
 		draining, err := s.Store.Transition(projectID, name, Input{Event: ScaleDown, Reason: "stop asked"})
