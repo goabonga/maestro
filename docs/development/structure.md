@@ -30,7 +30,7 @@ component owns it, and how the pieces depend on each other.
 | `internal/integration/` | Integration: the operations journal and durable result references ([details](operations.md)), source chain validation ([details](source-chain.md)), the candidate build ([details](integration-candidate.md)), publication and finalization ([details](publication.md)), sync ([details](sync.md)) publication to the user repository ([details](user-publication.md)), conflict resolution ([details](conflict-resolution.md)) and the startup recovery of operations ([details](recovery.md)). |
 | `internal/attach/` | The raw-terminal attach client shared by the CLI and the dashboard ([details](attach.md)). |
 | `internal/tui/` | The terminal dashboard over the daemon API ([details](tui.md)). |
-| `internal/worker/` | Worker registry: identities, the lifecycle transition table and assignments, persisted with their events ([details](workers.md)). |
+| `internal/worker/` | Worker registry: identities, the lifecycle transition table and assignments, persisted with their events, and the supervisor starting and stopping the workers' confined agent sessions ([details](workers.md)). |
 | `scripts/` | Python project (`maestro-scripts`): CI detection, release, Dependabot rewrite, signing, licence headers. Has its own uv lockfile and pytest suite. |
 | `docs/` | Source of the documentation site, built by Zensical. `development/` holds contributor pages. |
 | `assets/maestro.svg` | Canonical logo. `make icons` derives `docs/maestro.svg` and `docs/favicon.ico` from it. |
@@ -97,6 +97,10 @@ one directory per registered project:
     repository.git/                 private canonical repository
     worker-repositories/
         <worker>.git/               private clone of one worker
+    workers/
+        <worker>/worktree/          worktree a worker's session starts in
+        <worker>/home/              private HOME of its agent
+        <worker>/supervisor/        native session identity, daemon only
     worktrees/
         <worker>/tasks/<task-id>/   worktree of one task
     quarantine/
