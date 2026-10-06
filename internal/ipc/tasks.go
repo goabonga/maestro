@@ -376,6 +376,7 @@ func userWorkTree(project worktree.Project) (string, error) {
 func integrationHead(project worktree.Project) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", "refs/heads/maestro/integration^{commit}")
 	cmd.Dir = project.Repository()
+	cmd.Env = gitEnvironment()
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("read the integration head of project %s: %w", project.ID, err)
