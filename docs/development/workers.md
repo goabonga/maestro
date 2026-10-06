@@ -279,7 +279,11 @@ A failed worker keeps the assignment it held: the turn lost its
 runtime and its effects are not reconciled, and no other worker can
 take that turn until `recover` or `stop` releases it. The task of the
 assignment is blocked in the same transaction as the worker's failure,
-with the worker's reason, unless it is already blocked or finished. A
+with the worker's reason, unless it is already blocked or finished.
+That decision rests on the task's state read inside the transaction,
+after the worker's failure is written: the task cannot change between
+the decision and the block, and a task that another writer blocked or
+unblocked just before is judged on its new state. A
 worker with an unidentified survivor fails as well, so that two
 runtimes never work in the same repository.
 
