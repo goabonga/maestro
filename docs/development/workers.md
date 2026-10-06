@@ -5,7 +5,8 @@ private repository. Package `internal/worker` registers workers, holds
 their lifecycle state machine, and persists both in the `workers` and
 `worker_events` tables of the state database (schema version 10). Its
 `Supervisor` starts and stops the workers' confined agent sessions
-([below](#starting-and-stopping)).
+([below](#starting-and-stopping)) and exposes them to the task engine
+([live sessions](#live-sessions)).
 
 ## Identity
 
@@ -146,9 +147,9 @@ Each `STARTING` worker is then launched in the background:
 - a fresh private HOME and supervisor state directory
   (`workers/<worker>/home/` and `workers/<worker>/supervisor/`) hold
   the native session; the agent starts through its driver
-  (`ClaudeStart` or `CodexStart`) in a confined PTY, under a coding
+  (`ClaudeStart` or `CodexStart`) in a confined PTY, under a review
   permissions profile of epoch 1 on the integration head: the worktree
-  and the worker repository are writable, the agent binary is mounted
+  and the worker repository are read-only, the agent binary is mounted
   read-only, and the environment is limited to `PATH`, `TERM`, `LANG`,
   the private HOME variables and, when the agent configures
   `api_key_env`, that variable taken from the daemon's environment. The
@@ -193,6 +194,47 @@ of every group an earlier teardown failed on is retried. `Close` then
 returns once every group is gone, or after `CloseTimeout` (ten seconds
 by default) when a group could not be terminated. `maestro-svc` calls it
 when it shuts down.
+
+## Live sessions
+
+`Supervisor.Session(project, name)` returns the live session of a
+started worker, the `worker.Session` the task engine drives
+([Task engine](task-engine.md)); a worker that is starting, being
+stopped or torn down, failed or stopped has none. The session drives its
+agent through the worker's driver:
+
+| Method | Effect |
+| --- | --- |
+| `Checkout(task, revision)` | fetches the canonical repository's branches and `refs/maestro/` references into the worker repository (under `refs/canonical/`), checks the task branch out at the revision in the worker's worktree, discarding uncommitted changes and untracked files; ignored files, such as the provisioned instruction files, are kept |
+| `RuntimePaths()` | the instruction files provisioned in the worktree at start |
+| `Send(prompt)` | grants the turn's rights, then writes the prompt to the PTY as a bracketed paste followed by Enter (`agent.PromptInput`) and begins the detection of the turn |
+| `Poll()` | the driver's `agent.TurnDetector` on the PTY's output and the session's state |
+| `Interrupt()` | records the interruption in the detector and sends Esc |
+| `Settle()` | revokes the turn's rights |
+| `Close()` | ends the session of a worker the engine failed: the session is taken over for termination, its confined group terminated, whatever profile it runs under, and its slot released once the group is gone |
+
+Rights change by stop-and-resume, never in place. A started agent runs
+under a `review` profile until its first turn. A turn runs under a
+`coding` permissions profile: the worktree and the worker repository are
+writable. `Settle` ends the session's permissions epoch — input fenced,
+the whole confined group stopped and confirmed gone — and resumes the
+exact confirmed native conversation (`ClaudeResume` or `CodexResume`) in
+a new confined PTY under a `review` profile of the next epoch, where the
+worktree and the worker repository are read-only; once it returns nil,
+the agent cannot write the task's sources. The next `Send` resumes it
+the same way under a `coding` profile before writing its prompt. A
+resumed agent is ready for a prompt once its terminal has drawn
+something and stayed quiet for 300 ms, at most the start timeout. The
+detector's own turn and input-wait bounds are set to 24 hours: the
+engine enforces the task's bounds.
+
+A change of rights keeps the worker's slot and state: the session's
+watcher follows the resumed group instead of the stopped one. A resume
+that fails returns its error, and the engine then fails the worker and
+closes its session: a resumed agent that never settles is terminated
+with it. A resumed agent that exits fails the worker like a session that
+ended on its own. A stop or `Close` waits for a change of rights in progress, and a session
+taken over for termination is never resumed.
 
 ## Startup reconciliation
 
