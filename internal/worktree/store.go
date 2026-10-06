@@ -175,6 +175,7 @@ func canonicalGitDir(path string) (string, error) {
 // built by Maestro, never from task text.
 func git(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...) // #nosec G204
+	cmd.Env = gitEnvironment()
 	if dir != "" {
 		cmd.Dir = dir
 	}
