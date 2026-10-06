@@ -5,11 +5,18 @@ package ipc
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/goabonga/maestro/internal/launcher"
+	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/turn"
 	"github.com/goabonga/maestro/internal/worker"
 	"github.com/goabonga/maestro/internal/worktree"
@@ -177,5 +184,142 @@ func TestShowWorkerKeepsOnlyTheRecentEvents(t *testing.T) {
 	if len(events) != RecentWorkerEvents || events[0].Event != string(worker.Start) ||
 		events[len(events)-1].Reason != last {
 		t.Fatalf("events=%+v", events)
+	}
+}
+
+// claudeFixture stands for Claude Code: it answers --version on the
+// host, and in its confined PTY records its chosen session in its
+// private configuration, then waits on its terminal.
+const claudeFixture = `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.289 (Claude Code)"; exit 0; fi
+mkdir -p "$CLAUDE_CONFIG_DIR/projects/fixture"
+printf '{"sessionId":"%s","cwd":"%s","version":"2.1.289"}\n' "$2" "$PWD" > "$CLAUDE_CONFIG_DIR/projects/fixture/$2.jsonl"
+exec cat
+`
+
+// supervisedServer builds a server starting workers of the fixture
+// agent, with the given session ceiling.
+func supervisedServer(t *testing.T, sessions int) (*Server, *httptest.Server, worktree.Project) {
+	t.Helper()
+	confined, err := launcher.New()
+	if errors.Is(err, launcher.ErrUnsupported) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, web, project := workerServer(t)
+	capacity, err := scheduler.NewCapacity(sessions, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(binary, []byte(claudeFixture), 0o700); err != nil { // #nosec G306 -- an executable fixture
+		t.Fatal(err)
+	}
+	server.Capacity = capacity
+	server.Supervisor = &worker.Supervisor{
+		Store: *server.Workers, Projects: server.Store, Capacity: capacity, Launcher: confined,
+		LookPath: func(name string) (string, error) {
+			if name != "claude" {
+				return "", errors.New("not found")
+			}
+			return binary, nil
+		},
+		StartTimeout: 15 * time.Second, StopGrace: 200 * time.Millisecond,
+	}
+	t.Cleanup(server.Supervisor.Close)
+	return server, web, project
+}
+
+// awaitWorker polls a worker over the API until it reaches a state.
+func awaitWorker(t *testing.T, web *httptest.Server, project worktree.Project, name string, want worker.State) workerView {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		status, envelope, raw := call(t, web, "GET", "/v1/workers/"+name+"?project_id="+project.ID, nil, "")
+		if status != http.StatusOK {
+			t.Fatalf("status=%d body=%s", status, raw)
+		}
+		view := decodeWorkers[workerView](t, envelope)
+		if view.State == string(want) {
+			return view
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s is %s (%s), want %s", name, view.State, view.Reason, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestWorkerStartAndStopNeedASupervisor(t *testing.T) {
+	_, web, project := workerServer(t)
+	for path, document := range map[string]string{
+		"/v1/workers":                `{"project_id": "` + project.ID + `", "agent": "claude-code", "count": 1}`,
+		"/v1/workers/claude-01/stop": `{"project_id": "` + project.ID + `"}`,
+	} {
+		status, envelope, raw := call(t, web, "POST", path, map[string]string{"Idempotency-Key": path}, document)
+		if status != http.StatusNotFound || envelope.Error == nil || envelope.Error.Message != "this daemon does not start workers" {
+			t.Fatalf("%s: status=%d body=%s", path, status, raw)
+		}
+	}
+}
+
+func TestStartWorkersUpToCapacityThenStopThem(t *testing.T) {
+	server, web, project := supervisedServer(t, 2)
+	start := `{"project_id": "` + project.ID + `", "agent": "claude-code", "count": 2}`
+	status, envelope, raw := call(t, web, "POST", "/v1/workers", map[string]string{"Idempotency-Key": "s1"}, start)
+	if status != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", status, raw)
+	}
+	started := decodeWorkers[[]workerView](t, envelope)
+	if len(started) != 2 || started[0].Name != "claude-code-01" || started[1].Name != "claude-code-02" ||
+		started[0].State != string(worker.Starting) || started[0].Driver != "claude-code-2.1" {
+		t.Fatalf("started=%+v", started)
+	}
+	// A retry with the same key replays the start, and starts nothing.
+	if replayed, _, again := call(t, web, "POST", "/v1/workers", map[string]string{"Idempotency-Key": "s1"}, start); replayed != http.StatusAccepted || string(again) != string(raw) {
+		t.Fatalf("replay: status=%d body=%s", replayed, again)
+	}
+	for _, view := range started {
+		idle := awaitWorker(t, web, project, view.Name, worker.Idle)
+		if !strings.Contains(idle.Reason, "native session") {
+			t.Fatalf("idle=%+v", idle)
+		}
+	}
+	if used := server.Capacity.Usage()[scheduler.Sessions].Used; used != 2 {
+		t.Fatalf("sessions used %d", used)
+	}
+
+	for document, want := range map[string]int{
+		`{"project_id": "` + project.ID + `", "agent": "claude-code", "count": 1}`: http.StatusConflict,
+		`{"project_id": "` + project.ID + `", "agent": "claude-code", "count": 0}`: http.StatusBadRequest,
+		`{"project_id": "` + project.ID + `", "agent": "gpt", "count": 1}`:         http.StatusBadRequest,
+		`{"project_id": "` + project.ID + `", "agent": "codex", "count": 1}`:       http.StatusConflict,
+		`{"project_id": "` + project.ID + `"}`:                                     http.StatusBadRequest,
+		`{"project_id": "missing", "agent": "claude-code", "count": 1}`:            http.StatusNotFound,
+	} {
+		status, _, raw := call(t, web, "POST", "/v1/workers", map[string]string{"Idempotency-Key": document}, document)
+		if status != want {
+			t.Fatalf("%s: status=%d body=%s", document, status, raw)
+		}
+	}
+
+	stop := `{"project_id": "` + project.ID + `"}`
+	status, envelope, raw = call(t, web, "POST", "/v1/workers/claude-code-01/stop", map[string]string{"Idempotency-Key": "t1"}, stop)
+	if status != http.StatusOK || decodeWorkers[workerView](t, envelope).State != string(worker.Stopped) {
+		t.Fatalf("stop: status=%d body=%s", status, raw)
+	}
+	if used := server.Capacity.Usage()[scheduler.Sessions].Used; used != 1 {
+		t.Fatalf("the stop kept its slot: %d used", used)
+	}
+	for path, want := range map[string]int{
+		"/v1/workers/claude-code-01/stop": http.StatusConflict,
+		"/v1/workers/missing/stop":        http.StatusNotFound,
+	} {
+		status, _, raw := call(t, web, "POST", path, map[string]string{"Idempotency-Key": "again" + path}, stop)
+		if status != want {
+			t.Fatalf("%s: status=%d body=%s", path, status, raw)
+		}
 	}
 }

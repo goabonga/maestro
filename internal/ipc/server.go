@@ -51,6 +51,10 @@ type Server struct {
 	// Workers reads the worker registry of the projects; nil disables
 	// the worker routes.
 	Workers *worker.Store
+
+	// Supervisor starts and stops the workers' sessions; nil disables
+	// the worker start and stop routes.
+	Supervisor *worker.Supervisor
 }
 
 // projectView is the JSON shape of a project.

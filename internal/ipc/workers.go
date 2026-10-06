@@ -4,12 +4,17 @@
 package ipc
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/goabonga/maestro/internal/agent"
+	"github.com/goabonga/maestro/internal/config"
+	"github.com/goabonga/maestro/internal/launcher"
+	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/worker"
 	"github.com/goabonga/maestro/internal/worktree"
 )
@@ -66,11 +71,13 @@ func viewWorker(w worker.Worker) workerView {
 	return view
 }
 
-// workerRoutes registers the worker routes, which only read the
-// registry.
+// workerRoutes registers the worker routes; starting and stopping
+// workers are idempotent.
 func (s *Server) workerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/workers", s.listWorkers)
+	mux.HandleFunc("POST /v1/workers", idempotent(s.DB, s.startWorkers))
 	mux.HandleFunc("GET /v1/workers/{name}", s.showWorker)
+	mux.HandleFunc("POST /v1/workers/{name}/stop", idempotent(s.DB, s.stopWorker))
 }
 
 // workerProject resolves the project a worker request names, writing
@@ -148,4 +155,100 @@ func (s *Server) showWorker(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	reply(w, r, http.StatusOK, view)
+}
+
+// startRequest is the body of POST /v1/workers.
+type startRequest struct {
+	ProjectID string `json:"project_id"`
+	Agent     string `json:"agent"`
+	Count     int    `json:"count"`
+}
+
+// supervisedProject resolves the project a worker start or stop names,
+// writing the error envelope when it cannot or when this daemon starts
+// no worker.
+func (s *Server) supervisedProject(w http.ResponseWriter, r *http.Request, id string) (worktree.Project, bool) {
+	if s.Supervisor == nil {
+		fail(w, r, http.StatusNotFound, CodeNotFound, "this daemon does not start workers")
+		return worktree.Project{}, false
+	}
+	return s.workerProject(w, r, id)
+}
+
+// startWorkers starts count workers of an agent of a project, bounded by
+// the global session ceiling: it takes and persists the configuration
+// snapshot of the user's repository as it is now, reserves the session
+// slots and answers 202 with the STARTING workers, while each one is
+// provisioned and launched in the background until it is IDLE or
+// FAILED. A refusal starts nothing.
+func (s *Server) startWorkers(w http.ResponseWriter, r *http.Request) {
+	var request startRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || strings.TrimSpace(request.Agent) == "" {
+		fail(w, r, http.StatusBadRequest, CodeInvalidRequest,
+			"body must be {\"project_id\": \"<id>\", \"agent\": \"<name>\", \"count\": <n>}")
+		return
+	}
+	project, ok := s.supervisedProject(w, r, request.ProjectID)
+	if !ok {
+		return
+	}
+	configID, ok := s.snapshotProject(w, r, project)
+	if !ok {
+		return
+	}
+	snapshot, err := config.LoadSnapshot(s.DB, configID)
+	if err != nil {
+		fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
+		return
+	}
+	started, err := s.Supervisor.Start(r.Context(), worker.StartRequest{
+		Project: project, Agent: request.Agent, Count: request.Count, ConfigID: configID, Snapshot: snapshot,
+	})
+	if err != nil {
+		status, code := http.StatusInternalServerError, CodeInternal
+		switch {
+		case errors.Is(err, worker.ErrInvalid), errors.Is(err, agent.ErrNoDriver):
+			status, code = http.StatusBadRequest, CodeInvalidRequest
+		case errors.Is(err, worker.ErrAgent), errors.Is(err, scheduler.ErrFull), errors.Is(err, launcher.ErrUnsupported),
+			errors.Is(err, worker.ErrClosed), errors.Is(err, worker.ErrTransition):
+			status, code = http.StatusConflict, CodeConflict
+		}
+		fail(w, r, status, code, err.Error())
+		return
+	}
+	views := make([]workerView, 0, len(started))
+	for _, found := range started {
+		views = append(views, viewWorker(found))
+	}
+	reply(w, r, http.StatusAccepted, views)
+}
+
+// stopWorker stops a worker of a project: it is drained, its confined
+// group terminated and its session slot released, and it ends STOPPED.
+func (s *Server) stopWorker(w http.ResponseWriter, r *http.Request) {
+	var request transitionRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		fail(w, r, http.StatusBadRequest, CodeInvalidRequest, "body must be {\"project_id\": \"<id>\"}")
+		return
+	}
+	project, ok := s.supervisedProject(w, r, request.ProjectID)
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+	stopped, err := s.Supervisor.Stop(project.ID, name)
+	switch {
+	case errors.Is(err, worker.ErrNotFound):
+		fail(w, r, http.StatusNotFound, CodeNotFound, fmt.Sprintf("unknown worker in project %s: %s", project.ID, name))
+	case errors.Is(err, worker.ErrTransition), errors.Is(err, worker.ErrGuard):
+		fail(w, r, http.StatusConflict, CodeConflict, err.Error())
+	case err != nil:
+		fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
+	default:
+		reply(w, r, http.StatusOK, viewWorker(stopped))
+	}
 }
