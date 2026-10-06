@@ -43,6 +43,11 @@ modified behind your back.
   it and terminates its session. Each worker is shown with its agent,
   driver, state, current assignment and recent events.
   [Command reference](docs/cli.md#workers)
+- **Drives tasks on the started workers**: each task goes through
+  planning, implementation, the project's tests, review and corrections,
+  one agent turn at a time, until it is ready to integrate or blocked
+  with its reason; the agent writes the task's sources only during its
+  turns. [Managing tasks](docs/tasks.md#progress)
 - **Shows a live dashboard** (`maestro tui`) of the daemon's status and
   capacity, the projects and their tasks with their history.
   [Terminal dashboard](docs/tui.md)
