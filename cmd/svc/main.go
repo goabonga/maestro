@@ -38,7 +38,8 @@ func main() {
 
 // run parses the daemon flags, then starts it: migrate the store and
 // reconcile the recorded workers under the user lock, bind the socket,
-// serve until the context ends.
+// serve and drive the tasks on the started workers until the context
+// ends.
 func run(ctx context.Context, args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("maestro-svc", flag.ContinueOnError)
 	flags.SetOutput(output)
@@ -120,13 +121,25 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	// A sync runs its tests confined; a host that cannot confine has no
 	// test runner, and every sync is refused rather than left untested.
 	// Without confinement, every worker start is refused as well.
+	// The task engine drives the tasks of a project on its IDLE workers
+	// whenever a task is created or changed, a worker becomes IDLE, and
+	// at every sweep.
+	engine := &worker.Engine{DB: db, Projects: store, Sessions: server.Supervisor}
 	if confined, err := launcher.New(); err == nil {
-		server.Sync.Tester = &testrun.Runner{Launcher: confined}
+		runner := &testrun.Runner{Launcher: confined}
+		server.Sync.Tester = runner
 		server.Supervisor.Launcher = confined
+		engine.Tester = runner
 	}
-	err = transport.Serve(ctx, listener, server.Handler())
-	// A sync running in the background finishes its journal, and every
-	// live worker is stopped, before the store closes.
+	drives := &driver{ctx: ctx, engine: engine, store: store, output: &lockedWriter{w: output}}
+	server.Supervisor.Ready = drives.project
+	drives.sweep(sweepInterval)
+	err = transport.Serve(ctx, listener, advancing(server.Handler(), drives))
+	// The drives in progress stop their turns, a sync running in the
+	// background finishes its journal, and every live worker is stopped,
+	// before the store closes.
+	stop()
+	drives.close()
 	server.Wait()
 	server.Supervisor.Close()
 	return err
