@@ -144,6 +144,7 @@ func digestOf(worktree string, args ...string) (string, error) {
 // rawGit runs one read-only git command and returns its raw output.
 func rawGit(worktree string, args ...string) ([]byte, error) {
 	command := exec.Command("git", append([]string{"-C", worktree}, args...)...) // #nosec G204 -- fixed verbs and pathspecs, never task text
+	command.Env = gitEnvironment()
 	output, err := command.Output()
 	if err != nil {
 		return nil, fmt.Errorf("git %v: %w", args, err)
