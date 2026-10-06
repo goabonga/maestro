@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goabonga/maestro/internal/task"
 )
@@ -159,6 +160,70 @@ func TestReconcileLeavesAnAlreadyBlockedTaskAlone(t *testing.T) {
 	}
 	if blocked.BlockedReason != "waiting for a human" {
 		t.Fatalf("the block was overwritten: %+v", blocked)
+	}
+}
+
+// changing returns a worker store whose first clock reading applies an
+// event to the fixture's task, as another writer would once the
+// reconciliation has started.
+func changing(t *testing.T, e env, in task.Input) Store {
+	t.Helper()
+	tasks := task.Store{DB: e.store.DB, Now: e.clock.now}
+	store := e.store
+	changed := false
+	store.Now = func() time.Time {
+		if !changed {
+			changed = true
+			if _, err := tasks.Transition(e.taskID, in); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return e.clock.now()
+	}
+	return store
+}
+
+func TestReconcileLeavesATaskBlockedMeanwhileAlone(t *testing.T) {
+	e := fixture(t)
+	toState(t, e, "w", Busy)
+	store := changing(t, e, task.Input{Event: task.Block, Reason: "waiting for a human"})
+	outcomes, err := store.Reconcile(e.project.ID, none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcomes[0].To != Failed || outcomes[0].TaskBlocked {
+		t.Fatalf("outcome %+v", outcomes[0])
+	}
+	blocked, err := task.Store{DB: e.store.DB}.Get(e.taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.State != task.Blocked || blocked.BlockedReason != "waiting for a human" {
+		t.Fatalf("the block was overwritten: %+v", blocked)
+	}
+}
+
+func TestReconcileBlocksATaskThatLeftBlockedMeanwhile(t *testing.T) {
+	e := fixture(t)
+	tasks := task.Store{DB: e.store.DB, Now: e.clock.now}
+	if _, err := tasks.Transition(e.taskID, task.Input{Event: task.Block, Reason: "waiting for a human"}); err != nil {
+		t.Fatal(err)
+	}
+	toState(t, e, "w", Busy)
+	store := changing(t, e, task.Input{Event: task.Resume, Guard: task.Guard{CauseLifted: true, Reconciled: true}})
+	outcomes, err := store.Reconcile(e.project.ID, none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcomes[0].To != Failed || !outcomes[0].TaskBlocked {
+		t.Fatalf("a failed worker holds an active task: %+v", outcomes[0])
+	}
+	blocked, err := tasks.Get(e.taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.State != task.Blocked || !strings.Contains(blocked.BlockedReason, "worker w failed") {
+		t.Fatalf("task %+v", blocked)
 	}
 }
 

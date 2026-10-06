@@ -70,7 +70,8 @@ func (r Reconciliation) Changed() bool {
 //   - An active worker holding an assignment fails and keeps it: the
 //     turn lost its runtime and its effects are not reconciled. The
 //     task of the assignment is blocked in the same transaction, unless
-//     it is already blocked or finished.
+//     it is already blocked or finished, as read inside that
+//     transaction.
 //   - A PAUSED worker without survivors stays PAUSED: it had no
 //     runtime to lose.
 //   - Any other active worker is stopped: it had no turn and no process
@@ -145,14 +146,21 @@ func (s Store) reconcileOne(w Worker, survivors Survivors) (Reconciliation, erro
 		return outcome, err
 	}
 	if next.State == Failed && next.Assignment != nil {
+		// The task of a held turn is blocked unless the table refuses it
+		// a block: it is already blocked or finished. The decision rests
+		// on the task row read inside this transaction, which already
+		// holds the worker's write: the task cannot change between that
+		// decision and the block.
 		tasks := task.Store{DB: s.DB, Now: s.Now}
-		_, err := tasks.TransitionTx(tx, next.Assignment.TaskID,
+		held, err := tasks.TransitionTx(tx, next.Assignment.TaskID,
 			task.Input{Event: task.Block, Reason: "worker " + w.Name + " failed: " + next.Reason})
 		switch {
 		case err == nil:
 			outcome.TaskBlocked = true
-		case !errors.Is(err, task.ErrTransition):
-			return outcome, err
+		case errors.Is(err, task.ErrTransition) && held.ID == next.Assignment.TaskID && !task.Accepts(held.State, task.Block):
+			// The refusal came from the table on the row read here.
+		default:
+			return outcome, fmt.Errorf("block task %s: %w", next.Assignment.TaskID, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
