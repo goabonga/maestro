@@ -30,6 +30,30 @@ crashed daemon never blocks a restart, and a stale socket file left by
 a crash is detected by a failed connection and cleaned up under the
 user lock at the next start.
 
+## Restart
+
+A daemon that starts holds none of the sessions of the previous one:
+before it answers any request, it reconciles the workers it has
+recorded. It never signals a process and never resumes a conversation
+on its own:
+
+- a worker that held a turn becomes `FAILED` and keeps that turn, and
+  the turn's task is blocked with the worker's reason;
+- a worker with processes still working in its repository becomes
+  `FAILED`, so that two runtimes never share one workspace;
+- any other worker that was running is `STOPPED`; a paused worker stays
+  `PAUSED`.
+
+The daemon prints one line per worker it moved or found processes for,
+also written to `svc.log` when started by `maestro daemon start`:
+
+```console
+worker 6b1f6d3a-…/claude-01: BUSY -> FAILED: runtime lost with the previous daemon while holding turn … of task …
+worker 6b1f6d3a-…/codex-01: IDLE -> STOPPED: runtime lost with the previous daemon
+```
+
+`maestro worker show <name>` gives the reason recorded on each worker.
+
 ## Capacity
 
 The daemon bounds concurrent work machine-wide: `--max-sessions`
