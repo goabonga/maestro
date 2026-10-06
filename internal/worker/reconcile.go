@@ -6,6 +6,7 @@ package worker
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -41,7 +42,7 @@ type Reconciliation struct {
 	// reconciliation: a failed worker keeps the one it held.
 	Assignment *Assignment
 	// Survivors are the processes found working in the worker's
-	// repository.
+	// repository or in its directory of the project.
 	Survivors []int
 	// TaskBlocked reports that the task of the held assignment was
 	// blocked.
@@ -60,8 +61,10 @@ func (r Reconciliation) Changed() bool {
 // previous daemon is lost. Nothing is signalled and no conversation is
 // resumed; a worker is only moved through the transition table.
 //
-//   - A worker with processes still working in its repository, or whose
-//     repository could not be searched, has an unidentified survivor:
+//   - A worker with processes still working in its repository or in its
+//     directory of the project — the worktree its session starts in,
+//     its private HOME and its supervisor state — or whose workspaces
+//     could not be searched, has an unidentified survivor:
 //     an active worker fails, so that no second runtime can take the
 //     same workspace; a STOPPED or FAILED one is only reported.
 //   - An active worker holding an assignment fails and keeps it: the
@@ -97,14 +100,18 @@ func (s Store) Reconcile(projectID string, survivors Survivors) ([]Reconciliatio
 // reconcileOne decides and applies the reconciliation of one worker.
 func (s Store) reconcileOne(w Worker, survivors Survivors) (Reconciliation, error) {
 	outcome := Reconciliation{Name: w.Name, From: w.State, To: w.State, Assignment: w.Assignment}
-	pids, err := survivors(w.Repository)
-	outcome.Survivors = pids
-	switch {
-	case err != nil:
-		outcome.Reason = fmt.Sprintf(reasonSearch, w.Repository, err)
-	case len(pids) > 0:
-		outcome.Reason = fmt.Sprintf(reasonSurvivors, joinPIDs(pids), w.Repository)
+	var reasons []string
+	for _, dir := range workspaces(w) {
+		pids, err := survivors(dir)
+		outcome.Survivors = append(outcome.Survivors, pids...)
+		switch {
+		case err != nil:
+			reasons = append(reasons, fmt.Sprintf(reasonSearch, dir, err))
+		case len(pids) > 0:
+			reasons = append(reasons, fmt.Sprintf(reasonSurvivors, joinPIDs(pids), dir))
+		}
 	}
+	outcome.Reason = strings.Join(reasons, "; ")
 	unidentified := outcome.Reason != ""
 
 	var in Input
@@ -153,6 +160,15 @@ func (s Store) reconcileOne(w Worker, survivors Survivors) (Reconciliation, erro
 	}
 	outcome.To, outcome.Assignment, outcome.Reason = next.State, next.Assignment, next.Reason
 	return outcome, nil
+}
+
+// workspaces returns the directories a runtime of the worker works in:
+// its private repository, and its own directory of the project, which
+// holds the worktree its session starts in, its private HOME and its
+// supervisor state.
+func workspaces(w Worker) []string {
+	project := filepath.Dir(filepath.Dir(w.Repository))
+	return []string{w.Repository, filepath.Join(project, "workers", w.Name)}
 }
 
 // joinPIDs renders process IDs for a reason.

@@ -5,6 +5,7 @@ package worker
 
 import (
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -174,6 +175,25 @@ func TestReconcileFailsActiveWorkersWithUnidentifiedSurvivors(t *testing.T) {
 				t.Fatalf("reason %q", outcome.Reason)
 			}
 		})
+	}
+}
+
+func TestReconcileFailsAWorkerWithSurvivorsInItsWorktree(t *testing.T) {
+	e := fixture(t)
+	toState(t, e, "w", Idle)
+	worktree := e.project.WorkerWorktree("w")
+	search := func(dir string) ([]int, error) {
+		if worktree == dir || strings.HasPrefix(worktree, dir+"/") {
+			return []int{51}, nil
+		}
+		return nil, nil
+	}
+	outcome := reconcile(t, e, search)["w"]
+	if outcome.To != Failed || !slices.Equal(outcome.Survivors, []int{51}) {
+		t.Fatalf("outcome %+v", outcome)
+	}
+	if !strings.Contains(outcome.Reason, "unidentified processes 51 still work in "+filepath.Dir(worktree)) {
+		t.Fatalf("reason %q", outcome.Reason)
 	}
 }
 
