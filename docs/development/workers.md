@@ -3,8 +3,9 @@
 A worker is one work slot of a project: an agent, its driver and a
 private repository. Package `internal/worker` registers workers, holds
 their lifecycle state machine, and persists both in the `workers` and
-`worker_events` tables of the state database (schema version 10). It
-records state only: it starts no process and calls no agent.
+`worker_events` tables of the state database (schema version 10). Its
+`Supervisor` starts and stops the workers' confined agent sessions
+([below](#starting-and-stopping)).
 
 ## Identity
 
@@ -102,6 +103,96 @@ transition makes the later one fail with `ErrTransition` instead of
 overwriting it. Each event row records the task and turn of the
 assignment the worker held or took.
 
+## Starting and stopping
+
+`Supervisor.Start` starts `Count` workers of one agent of a project:
+
+1. **Agent.** The agent is a name of the configuration snapshot: when
+   `[agents.<name>]` sets a `driver`, that driver names the agent kind;
+   otherwise the name is the kind itself (`claude-code` or `codex`).
+   `agent.Registry.Installed` finds the kind's binary on `PATH`, reads
+   its `--version` and selects the validated driver, as `maestro agent
+   doctor` does. An unknown kind or a version without a validated driver
+   fails with `agent.ErrNoDriver`; every resolution failure is wrapped in
+   `worker.ErrAgent`. A daemon that cannot confine refuses every start
+   with `launcher.ErrUnsupported`.
+2. **Capacity.** One session slot of the global capacity
+   (`max_sessions`) is reserved per worker, all of them or none: a
+   count above the free slots fails with `scheduler.ErrFull` and
+   registers nothing.
+3. **Workers.** The `STOPPED` workers of the same agent, kind and driver
+   are started again, by name; the others are registered under the first
+   free names `<agent>-01`, `<agent>-02`, and so on. A worker that is
+   still being stopped, or whose group is not confirmed gone, is never
+   reused. Each one takes the `start` event with its reserved slot and is
+   returned `STARTING`. When a step fails, the start registers nothing:
+   the workers it registered are removed, the reused ones take the `stop`
+   event back to `STOPPED`, and every slot is released.
+
+Each `STARTING` worker is then launched in the background:
+
+- its private repository (`worktree.Store.AddWorker`) receives the
+  current integration head, checked out detached in the worker's own
+  worktree, `workers/<worker>/worktree/` of the project
+  (`worktree.Store.CheckoutWorker`). A starting worker holds no
+  assignment, so an existing worktree is reset to that head: the
+  uncommitted changes and untracked files of a previous run, ignored
+  files included, are discarded;
+- the snapshot's instruction files are provisioned in that worktree for
+  the agent kind, without a role (`provision.Instructions`), and the MCP
+  servers that apply to the agent are written in its native user
+  configuration inside its private HOME: `.claude/.claude.json` for
+  Claude Code, `.codex/config.toml` for Codex;
+- a fresh private HOME and supervisor state directory
+  (`workers/<worker>/home/` and `workers/<worker>/supervisor/`) hold
+  the native session; the agent starts through its driver
+  (`ClaudeStart` or `CodexStart`) in a confined PTY, under a coding
+  permissions profile of epoch 1 on the integration head: the worktree
+  and the worker repository are writable, the agent binary is mounted
+  read-only, and the environment is limited to `PATH`, `TERM`, `LANG`,
+  the private HOME variables and, when the agent configures
+  `api_key_env`, that variable taken from the daemon's environment. The
+  session shares the host network, so the agent reaches its provider;
+- the native session identity is confirmed from the agent's own
+  metadata (`ConfirmClaude` or `ConfirmCodex`), polled until it holds,
+  then bound to the session epoch. The worker takes the `ready` event
+  and is `IDLE`, with the confirmed ID in its reason.
+
+Any failure on the way — an agent that exits before confirming its
+session, a confirmation that does not hold within the start timeout (one
+minute by default), a provisioning error — terminates the session group
+and moves the worker to `FAILED` with the cause in its reason. An `IDLE`
+worker whose session ends on its own is moved to `FAILED` the same way;
+until that failure is recorded, the worker is being torn down: a stop is
+refused and its name is not reused.
+
+A slot is released only once its session group is confirmed gone: every
+session is watched until its group ends, so a group whose termination
+fails keeps its slot against `max_sessions`, and its worker's name is
+not reused, until the group is seen gone.
+
+`Supervisor.Stop` stops a worker. A live worker takes the `scale-down`
+event, so it is `DRAINING` and takes no new assignment; its confined
+group is terminated (SIGTERM, then SIGKILL after the grace period), its
+slot released, and it takes the `drained` event to `STOPPED`. A `FAILED`
+worker takes the `stop` event to `STOPPED` once its group is gone: when
+an earlier termination of its group failed, the stop retries it first. A
+worker that is `STARTING`, already `STOPPED`, holding an assignment,
+already being stopped by another call or being torn down after its
+session ended on its own is refused with `worker.ErrTransition`: stops
+of one worker never run concurrently. A
+group that cannot be terminated leaves the worker `FAILED`, its slot
+held until the group ends, and a later stop that cannot terminate it
+either leaves it `FAILED` too.
+
+`Supervisor.Close` refuses new starts, abandons the starts in progress
+and stops every live worker; a live session a stop leaves behind is
+terminated anyway and its worker moved to `FAILED`, and the termination
+of every group an earlier teardown failed on is retried. `Close` then
+returns once every group is gone, or after `CloseTimeout` (ten seconds
+by default) when a group could not be terminated. `maestro-svc` calls it
+when it shuts down.
+
 ## Startup reconciliation
 
 A daemon that starts holds no runtime: every session of the previous
@@ -142,17 +233,27 @@ stopped, paused or failed and leaves them unchanged.
 
 ## Daemon API
 
-The daemon serves the registry read-only on its versioned JSON API
+The daemon serves the registry on its versioned JSON API
 (`internal/ipc`, `workers.go`). `maestro-svc` wires `ipc.Server.Workers`
-to a `worker.Store` on its state database; a server without one answers
-every worker route with `not_found`. Like the task routes, both name
-their project with `project_id` in the query, and a worker of another
-project is not disclosed.
+to a `worker.Store` on its state database, and `ipc.Server.Supervisor`
+to a supervisor bounded by its session ceiling and confined by its
+launcher; a server without a store answers every worker route with
+`not_found`, and one without a supervisor answers the start and stop
+routes with `not_found`. Like the task routes, the reads name their
+project with `project_id` in the query and the mutations in their body;
+a worker of another project is not disclosed. Both mutations require an
+`Idempotency-Key`: a retry replays the first response.
 
-| Route | Success |
-| --- | --- |
-| `GET /v1/workers?project_id=` | `200`, the project's workers, by name |
-| `GET /v1/workers/{name}?project_id=` | `200`, the worker with its `events` |
+| Route | Body | Success |
+| --- | --- | --- |
+| `GET /v1/workers?project_id=` | | `200`, the project's workers, by name |
+| `GET /v1/workers/{name}?project_id=` | | `200`, the worker with its `events` |
+| `POST /v1/workers` | `{"project_id", "agent", "count"}` | `202`, the `STARTING` workers |
+| `POST /v1/workers/{name}/stop` | `{"project_id"}` | `200`, the `STOPPED` worker |
+
+A start takes and persists the configuration snapshot of the user's
+repository as it is now, like a new task, and the workers are
+provisioned from it.
 
 A worker carries its `name`, `agent`, `agent_kind`, `driver`,
 `repository`, `state`, `version`, `reason`, `created_at`, `updated_at`
@@ -163,9 +264,13 @@ turn it is about, when there is one.
 
 | Code | Status | Cause |
 | --- | --- | --- |
-| `invalid_request` | 400 | missing `project_id` |
+| `invalid_request` | 400 | missing `project_id` or `agent`, a count below 1, an invalid configuration, or an agent without a validated driver |
 | `not_found` | 404 | unknown project, or a worker unknown in that project |
+| `conflict` | 409 | the session ceiling is reached, the agent's binary is missing or unreadable, the host cannot confine, the project's repository is missing, or the worker cannot stop in its state or is already being stopped |
 
 `maestro worker list` and `maestro worker show <name>` print these
-documents on the project of the current repository, or the one named
-by `--project <id>`.
+documents, and `maestro worker start <agent> [--count <n>]` and
+`maestro worker stop <name>` call the mutations, on the project of the
+current repository or the one named by `--project <id>`. `start`
+follows each worker until it is `IDLE` or `FAILED` and fails when one of
+them failed.
