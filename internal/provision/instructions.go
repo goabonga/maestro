@@ -525,6 +525,7 @@ func writeAtomic(name string, content []byte) error {
 func gitIn(dir string, args ...string) (string, error) {
 	command := exec.Command("git", args...) // #nosec G204 -- fixed verbs; paths are validated snapshot paths or Maestro's own
 	command.Dir = dir
+	command.Env = gitEnvironment()
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	output, err := command.Output()

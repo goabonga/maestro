@@ -194,6 +194,7 @@ func resolveCommit(dir, rev string) (string, error) {
 func git(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...) // #nosec G204 -- fixed git verbs; revisions are resolved to hashes and option-like values refused
 	cmd.Dir = dir
+	cmd.Env = gitEnvironment()
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
