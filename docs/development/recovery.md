@@ -124,3 +124,9 @@ reports are recorded with `RecordTestReports` for an integration, or
 `Publish`: a rolled back or abandoned integration leaves its task for the
 workflow to settle. Blocking decisions do not write anything; they are
 returned for the daemon to report.
+
+## Crash tests
+
+The [crash injection](crash-injection.md) tests kill a process at the
+named crash points between the Git and SQLite mutations of these
+operations and check the decisions above.
