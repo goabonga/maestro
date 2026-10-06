@@ -102,6 +102,44 @@ transition makes the later one fail with `ErrTransition` instead of
 overwriting it. Each event row records the task and turn of the
 assignment the worker held or took.
 
+## Startup reconciliation
+
+A daemon that starts holds no runtime: every session of the previous
+daemon is lost. Before it binds its socket, still under the user lock,
+`maestro-svc` calls `Store.Reconcile` on the workers of every
+registered project. The reconciliation moves workers only through the
+transition table, signals no process and resumes no conversation.
+
+It first searches the worker's repository for surviving processes with
+`launcher.Survivors`: the processes visible to the daemon whose working
+directory is that repository or lies below it. A confined group binds
+its workspace at the same path and works in it, so its processes show
+that path from the host. No persisted PID is trusted and the search
+proves no membership in a supervised group: a process it finds is an
+unidentified survivor, never a process to stop.
+
+| Recorded worker | Found | Decision |
+| --- | --- | --- |
+| any active state | survivors, or a failed search | `fail`; the reason names the processes or the error |
+| `BUSY`, `WAITING_INPUT`, `ATTACHED` or `DRAINING` holding a turn | no survivor | `fail`, keeping the assignment |
+| `PAUSED` | no survivor | unchanged: a paused worker has no runtime |
+| `STARTING`, `IDLE`, `ATTACHED` or `DRAINING` without a turn | no survivor | `stop`: no turn and no process are left to reconcile |
+| `STOPPED` or `FAILED` | anything | unchanged; survivors are only reported |
+
+A failed worker keeps the assignment it held: the turn lost its
+runtime and its effects are not reconciled, and no other worker can
+take that turn until `recover` or `stop` releases it. The task of the
+assignment is blocked in the same transaction as the worker's failure,
+with the worker's reason, unless it is already blocked or finished. A
+worker with an unidentified survivor fails as well, so that two
+runtimes never work in the same repository.
+
+Each decision is recorded as a `fail` or `stop` event with its reason.
+`maestro-svc` prints one line per worker it moved or found survivors
+for, such as `worker <project>/<name>: IDLE -> STOPPED: runtime lost
+with the previous daemon`. A second reconciliation finds the workers
+stopped, paused or failed and leaves them unchanged.
+
 ## Daemon API
 
 The daemon serves the registry read-only on its versioned JSON API
