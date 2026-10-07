@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Chris <goabonga@pm.me>
 
-// Package attach is the client side of a session's stream: it puts the
-// user's terminal in raw mode, relays input, output and resizes to a
-// session served by the daemon, such as the live session of a worker it
-// pilots, and leaves on Ctrl-].
+// Package attach is the client side of a worker's session stream: it
+// puts the user's terminal in raw mode, relays input, output and resizes
+// to the live session of the worker it pilots, and leaves on Ctrl-].
 package attach
 
 import (
@@ -48,19 +47,13 @@ func Resizes() (<-chan os.Signal, func()) {
 	return winch, func() { signal.Stop(winch) }
 }
 
-// Run connects to a session's stream on the daemon's socket, puts the
-// terminal in raw mode, relays input, output and resizes, and leaves on
-// Ctrl-]. The terminal is restored by a deferred call on every path,
-// errors included.
-func Run(ctx context.Context, socket, session string, term Terminal) error {
-	return run(ctx, socket, "/v1/sessions/"+url.PathEscape(session)+"/stream", "session "+session, term)
-}
-
 // Worker attaches the terminal as the human pilot of a worker of a
-// project, as Run does for a session: the daemon moves the worker to
-// ATTACHED before the stream opens, and hands it back on Ctrl-] or when
-// the connection ends. A refused attach, such as a worker whose turn is
-// running, returns the daemon's reason without touching the terminal.
+// project: the daemon moves the worker to ATTACHED before the stream
+// opens, and hands it back on Ctrl-] or when the connection ends. It
+// puts the terminal in raw mode, relays input, output and resizes, and
+// restores the terminal by a deferred call on every path, errors
+// included. A refused attach, such as a worker whose turn is running,
+// returns the daemon's reason without touching the terminal.
 func Worker(ctx context.Context, socket, projectID, name string, term Terminal) error {
 	path := "/v1/workers/" + url.PathEscape(name) + "/stream?project_id=" + url.QueryEscape(projectID)
 	return run(ctx, socket, path, "worker "+name, term)
