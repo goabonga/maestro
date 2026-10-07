@@ -49,7 +49,9 @@ modified behind your back.
   with its reason; the agent writes the task's sources only during its
   turns. [Managing tasks](docs/tasks.md#progress)
 - **Shows a live dashboard** (`maestro tui`) of the daemon's status and
-  capacity, the projects and their tasks with their history.
+  capacity, the projects, their tasks with their history and the worker
+  driving each one, and their workers with their state and recent
+  events; its command bar starts and stops workers.
   [Terminal dashboard](docs/tui.md)
 - **Syncs from your repository** (`maestro sync --from <branch>`): it
   imports the commit your branch points to, runs the project's configured
