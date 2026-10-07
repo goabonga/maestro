@@ -22,7 +22,7 @@ tests     0     1
   PROJECT     STATE  REPOSITORY
 > 6b1f6d3a-…  ok     /home/me/src/app/.git
 
-↑/↓ select · enter tasks · w workers · a attach · : command · r refresh · q quit
+↑/↓ select · enter tasks · w workers · : command · r refresh · q quit
 ```
 
 ## Screens
@@ -54,7 +54,7 @@ tests     0     1
 | `↑` / `↓` (or `k` / `j`) | move the selection |
 | `enter` | open the selected project, task or worker |
 | `w` | open the workers of the selected project, or of the project whose tasks are shown |
-| `a` | attach the terminal to a session |
+| `a` | pilot the selected worker, the worker shown, or the worker driving the task shown |
 | `:` | open the command bar |
 | `esc` / `backspace` | go back to the previous screen |
 | `r` | refresh now |
@@ -62,12 +62,20 @@ tests     0     1
 
 ## Attach
 
-`a` opens a prompt for a session id at the bottom of the screen; `enter`
-attaches the terminal to that session, as [`maestro attach`](cli.md)
-does, and `esc` closes the prompt. The dashboard is suspended for the
-time of the attach, which ends on `Ctrl-]` or with the session. The
-dashboard then resumes and reports `detached from <session>`, or the
-error that ended the attach, under its title.
+`a` attaches the terminal to a worker's session, as
+[`maestro attach`](cli.md#workers) does: the selected worker on the
+workers screen, the worker shown on its detail, or the worker driving
+the task shown on a task's detail. You then pilot the agent yourself:
+the worker is `ATTACHED`, and Maestro sends it no turn and writes
+nothing to its terminal until you leave. Only an `IDLE` worker, or one
+whose turn waits for an input, can be attached, by one pilot at a
+time; a worker running a turn is refused.
+
+The dashboard is suspended for the time of the attach, which ends on
+`Ctrl-]` or with the session. The worker is then handed back — `IDLE`,
+or `WAITING_INPUT` with its task, or `FAILED` when its session ended —
+and the dashboard resumes and reports `detached from <worker>`, or the
+error that ended or refused the attach, under its title.
 
 ## Command bar
 
