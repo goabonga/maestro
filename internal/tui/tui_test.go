@@ -583,6 +583,16 @@ func TestCommandBarRefusesInvalidCommands(t *testing.T) {
 		t.Fatal("a command without a project sent a request")
 	}
 	contains(t, next.(Model).View(), "no project selected")
+
+	// Without a project, an invalid command is still reported as such.
+	empty = New(Options{Socket: socket})
+	empty = send(t, empty, key(":"))
+	empty = typeIn(t, empty, "foo")
+	next, cmd = empty.Update(key("enter"))
+	if cmd != nil {
+		t.Fatal("an invalid command without a project sent a request")
+	}
+	contains(t, next.(Model).View(), `unknown command "foo"`)
 }
 
 func TestCommandBarReportsTheDaemonRefusal(t *testing.T) {

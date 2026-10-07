@@ -77,14 +77,15 @@ func (m Model) commandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// errNoProject refuses a valid command when no project is shown or
+// selected.
+var errNoProject = errors.New("no project selected")
+
 // command parses a command line and returns the request it runs, or the
 // error that refuses it before any request.
 func (m Model) command(line string) (tea.Cmd, error) {
 	fields := strings.Fields(line)
 	project, ok := m.commandProject()
-	if !ok {
-		return nil, errors.New("no project selected")
-	}
 	c := m.client
 	switch {
 	case fields[0] == "start" && (len(fields) == 2 || len(fields) == 3):
@@ -95,6 +96,9 @@ func (m Model) command(line string) (tea.Cmd, error) {
 				return nil, fmt.Errorf("start: the count must be a number of at least 1, not %q", fields[2])
 			}
 			count = n
+		}
+		if !ok {
+			return nil, errNoProject
 		}
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
@@ -111,6 +115,9 @@ func (m Model) command(line string) (tea.Cmd, error) {
 		}, nil
 	case fields[0] == "stop" && len(fields) == 2:
 		name := fields[1]
+		if !ok {
+			return nil, errNoProject
+		}
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 			defer cancel()
