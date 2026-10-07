@@ -312,6 +312,41 @@ func TestWorkersScreenShowsTheDaemonError(t *testing.T) {
 	contains(t, m.View(), "maestro · workers of "+other.ID, "not_found: this daemon does not serve workers")
 }
 
+func TestTaskDetailShowsTheAssignedWorker(t *testing.T) {
+	server, socket, project := daemonWith(t, func(*ipc.Server) {})
+	first := createTask(t, socket, project.ID, "add a verbose flag")
+	createTask(t, socket, project.ID, "write the changelog")
+	registerWorker(t, server, project, "claude-01")
+	registerWorker(t, server, project, "codex-01")
+	assignWorker(t, server, project, "claude-01", first, "implement the flag")
+	m := start(t, Options{Socket: socket, Project: project.ID})
+
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "maestro · task "+first, "worker:", "claude-01 (implementation, BUSY)")
+	if strings.Contains(m.View(), "codex-01") {
+		t.Fatalf("the detail shows a worker of no assignment:\n%s", m.View())
+	}
+
+	m = send(t, m, key("esc"))
+	m = send(t, m, key("down"))
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "maestro · task ", "write the changelog")
+	if strings.Contains(m.View(), "claude-01") || !strings.Contains(m.View(), "worker:") {
+		t.Fatalf("the detail of an unassigned task:\n%s", m.View())
+	}
+}
+
+func TestTaskDetailWithoutWorkersOmitsTheWorker(t *testing.T) {
+	_, socket, project := daemonWith(t, func(server *ipc.Server) { server.Workers = nil })
+	createTask(t, socket, project.ID, "add a verbose flag")
+	m := start(t, Options{Socket: socket, Project: project.ID})
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "add a verbose flag", "state:")
+	if strings.Contains(m.View(), "worker:") {
+		t.Fatalf("the detail shows workers the daemon does not serve:\n%s", m.View())
+	}
+}
+
 func TestProjectOptionOpensItsTasks(t *testing.T) {
 	socket, project := daemon(t)
 	m := start(t, Options{Socket: socket, Project: project})

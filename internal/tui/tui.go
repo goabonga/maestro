@@ -62,6 +62,10 @@ type refreshedMsg struct {
 	detail   taskDocument
 	workers  []workerDocument
 	worker   workerDocument
+	// drivers are the workers assigned to the detailed task; driversKnown
+	// is false when the daemon did not list its workers.
+	drivers      []workerDocument
+	driversKnown bool
 	// err is set when the daemon could not be reached.
 	err error
 	// screenErr is set when the daemon answered the screen's request
@@ -96,7 +100,10 @@ type Model struct {
 	detail    taskDocument
 	workers   []workerDocument
 	worker    workerDocument
-	width     int
+	// drivers and driversKnown are those of the detailed task.
+	drivers      []workerDocument
+	driversKnown bool
+	width        int
 
 	// prompting is set while the attach prompt reads a session id into
 	// input.
@@ -161,6 +168,9 @@ func (m Model) fetch() tea.Cmd {
 			msg.tasks, msg.screenErr = c.tasks(ctx, project)
 		case detailScreen:
 			msg.detail, msg.screenErr = c.task(ctx, project, id)
+			if msg.screenErr == nil {
+				msg.drivers, msg.driversKnown = assigned(ctx, c, project, id)
+			}
 		case workersScreen:
 			msg.workers, msg.screenErr = c.workers(ctx, project)
 		case workerScreen:
@@ -171,6 +181,23 @@ func (m Model) fetch() tea.Cmd {
 		}
 		return msg
 	}
+}
+
+// assigned returns the workers of a project assigned to a task. It
+// reports false when the daemon does not list the workers, so the task
+// is shown without them.
+func assigned(ctx context.Context, c client, project, id string) ([]workerDocument, bool) {
+	workers, err := c.workers(ctx, project)
+	if err != nil {
+		return nil, false
+	}
+	var drivers []workerDocument
+	for _, w := range workers {
+		if w.Assignment != nil && w.Assignment.TaskID == id {
+			drivers = append(drivers, w)
+		}
+	}
+	return drivers, true
 }
 
 // Update applies a key, a refresh result, a timer tick or a resize.
@@ -221,6 +248,7 @@ func (m *Model) apply(msg refreshedMsg) {
 		m.taskCursor = clamp(m.taskCursor, len(m.tasks))
 	case detailScreen:
 		m.detail = msg.detail
+		m.drivers, m.driversKnown = msg.drivers, msg.driversKnown
 	case workersScreen:
 		m.workers = msg.workers
 		m.workerCursor = clamp(m.workerCursor, len(m.workers))
@@ -284,7 +312,7 @@ func (m Model) open() (tea.Model, tea.Cmd) {
 		return m, m.refresh()
 	case m.screen == tasksScreen && len(m.tasks) > 0:
 		m.screen, m.taskID = detailScreen, m.tasks[m.taskCursor].ID
-		m.detail, m.screenErr, m.loaded = taskDocument{}, nil, false
+		m.detail, m.drivers, m.driversKnown, m.screenErr, m.loaded = taskDocument{}, nil, false, nil, false
 		return m, m.refresh()
 	case m.screen == workersScreen && len(m.workers) > 0:
 		m.screen, m.workerName = workerScreen, m.workers[m.workerCursor].Name
