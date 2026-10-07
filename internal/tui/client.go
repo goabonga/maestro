@@ -140,3 +140,50 @@ func (c client) task(ctx context.Context, project, id string) (taskDocument, err
 	err := c.get(ctx, "/v1/tasks/"+url.PathEscape(id)+"?project_id="+url.QueryEscape(project), &t)
 	return t, err
 }
+
+// assignmentDocument is a worker's current assignment.
+type assignmentDocument struct {
+	TaskID string `json:"task_id"`
+	Role   string `json:"role"`
+	TurnID string `json:"turn_id"`
+}
+
+// workerEventDocument is a recorded worker event.
+type workerEventDocument struct {
+	Event  string    `json:"event"`
+	From   string    `json:"from"`
+	To     string    `json:"to"`
+	TaskID string    `json:"task_id"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
+}
+
+// workerDocument is a worker, with its recent events when shown alone.
+type workerDocument struct {
+	ProjectID  string                `json:"project_id"`
+	Name       string                `json:"name"`
+	Agent      string                `json:"agent"`
+	AgentKind  string                `json:"agent_kind"`
+	Driver     string                `json:"driver"`
+	Repository string                `json:"repository"`
+	State      string                `json:"state"`
+	Assignment *assignmentDocument   `json:"assignment"`
+	Reason     string                `json:"reason"`
+	CreatedAt  time.Time             `json:"created_at"`
+	UpdatedAt  time.Time             `json:"updated_at"`
+	Events     []workerEventDocument `json:"events"`
+}
+
+// workers reads the workers of a project.
+func (c client) workers(ctx context.Context, project string) ([]workerDocument, error) {
+	var workers []workerDocument
+	err := c.get(ctx, "/v1/workers?project_id="+url.QueryEscape(project), &workers)
+	return workers, err
+}
+
+// worker reads one worker of a project with its recent events.
+func (c client) worker(ctx context.Context, project, name string) (workerDocument, error) {
+	var w workerDocument
+	err := c.get(ctx, "/v1/workers/"+url.PathEscape(name)+"?project_id="+url.QueryEscape(project), &w)
+	return w, err
+}

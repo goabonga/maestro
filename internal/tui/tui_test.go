@@ -25,6 +25,8 @@ import (
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/task"
 	"github.com/goabonga/maestro/internal/transport"
+	"github.com/goabonga/maestro/internal/turn"
+	"github.com/goabonga/maestro/internal/worker"
 	"github.com/goabonga/maestro/internal/worktree"
 )
 
@@ -47,10 +49,18 @@ func gitRepo(t *testing.T) string {
 	return dir
 }
 
-// daemon serves the daemon API with capacity and tasks on a Unix socket,
-// over the data directory of the test, with one registered repository.
-// It returns the socket and the project id.
+// daemon serves the daemon API with capacity, tasks and workers on a
+// Unix socket, over the data directory of the test, with one registered
+// repository. It returns the socket and the project id.
 func daemon(t *testing.T) (string, string) {
+	t.Helper()
+	_, socket, project := daemonWith(t, func(*ipc.Server) {})
+	return socket, project.ID
+}
+
+// daemonWith is daemon with the server configured before it serves; it
+// returns the server, the socket and the project.
+func daemonWith(t *testing.T, configure func(*ipc.Server)) (*ipc.Server, string, worktree.Project) {
 	t.Helper()
 	data := t.TempDir()
 	t.Setenv("MAESTRO_DATA_HOME", data)
@@ -80,11 +90,12 @@ func daemon(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	server := &ipc.Server{DB: db, Store: store, Service: "maestro-svc", Version: "0.0.0",
-		Capacity: capacity, Tasks: &task.Store{DB: db}}
+		Capacity: capacity, Tasks: &task.Store{DB: db}, Workers: &worker.Store{DB: db}}
+	configure(server)
 	web := &http.Server{Handler: server.Handler()}
 	go func() { _ = web.Serve(listener) }()
 	t.Cleanup(func() { _ = web.Close() })
-	return socket, project.ID
+	return server, socket, project
 }
 
 // createTask creates a task over the daemon API and returns its id.
@@ -200,6 +211,105 @@ func TestNavigatesFromProjectToTaskDetailAndBack(t *testing.T) {
 	contains(t, m.View(), "maestro · tasks of "+project, "> "+second)
 	m = send(t, m, key("esc"))
 	contains(t, m.View(), "maestro · dashboard", "> "+project)
+}
+
+// registerWorker registers a STOPPED claude worker in the project.
+func registerWorker(t *testing.T, server *ipc.Server, project worktree.Project, name string) {
+	t.Helper()
+	spec := worker.Spec{Name: name, Agent: "claude", AgentKind: "claude-code", Driver: "claude-code-2.1"}
+	if _, err := server.Workers.Register(project, spec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assignWorker starts a registered worker and assigns it the
+// implementation of a task, with a reason; it returns the turn id.
+func assignWorker(t *testing.T, server *ipc.Server, project worktree.Project, name, taskID, reason string) string {
+	t.Helper()
+	created, err := server.Tasks.Get(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assigned, err := turn.Store{DB: server.DB}.Create(created.ID, "claude", created.ConfigID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []worker.Input{
+		{Event: worker.Start, Guard: worker.Guard{CapacityReserved: true}},
+		{Event: worker.Ready, Guard: worker.Guard{SessionReady: true, ProfileConfirmed: true}},
+		{Event: worker.Assign, Reason: reason,
+			Assignment: worker.Assignment{TaskID: taskID, Role: worker.Implementation, TurnID: assigned.ID},
+			Guard:      worker.Guard{AssignmentPersisted: true}},
+	} {
+		if _, err := server.Workers.Transition(project.ID, name, input); err != nil {
+			t.Fatalf("%s: %v", input.Event, err)
+		}
+	}
+	return assigned.ID
+}
+
+func TestWorkersScreenListsTheProjectWorkersAndShowsOne(t *testing.T) {
+	server, socket, project := daemonWith(t, func(*ipc.Server) {})
+	m := start(t, Options{Socket: socket})
+	m = send(t, m, key("w"))
+	contains(t, m.View(), "maestro · workers of "+project.ID, "no workers")
+
+	taskID := createTask(t, socket, project.ID, "add a verbose flag")
+	registerWorker(t, server, project, "codex-01")
+	registerWorker(t, server, project, "claude-01")
+	turnID := assignWorker(t, server, project, "claude-01", taskID, "implement the flag")
+	m = send(t, m, key("r"))
+	contains(t, m.View(), "NAME", "AGENT", "STATE", "TASK", "ROLE", "UPDATED", "REASON",
+		"> claude-01", "BUSY", taskID, "implementation", "codex-01", "STOPPED", "enter show")
+
+	m = send(t, m, key("down"))
+	contains(t, m.View(), "> codex-01")
+	m = send(t, m, key("up"))
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "maestro · worker claude-01", "project:", project.ID, "agent:",
+		"claude (claude-code)", "driver:", "claude-code-2.1", "state:", "BUSY", "task:", taskID,
+		"role:", "implementation", "turn:", turnID, "repository:", project.WorkerRepository("claude-01"),
+		"EVENT", "register", "assign", "implement the flag")
+
+	m = send(t, m, key("esc"))
+	contains(t, m.View(), "maestro · workers of "+project.ID, "> claude-01")
+	m = send(t, m, key("esc"))
+	contains(t, m.View(), "maestro · dashboard", "> "+project.ID)
+}
+
+func TestWorkersScreenOpensFromTheTasksAndReturnsThere(t *testing.T) {
+	server, socket, project := daemonWith(t, func(*ipc.Server) {})
+	registerWorker(t, server, project, "claude-01")
+	m := start(t, Options{Socket: socket, Project: project.ID})
+	contains(t, m.View(), "w workers")
+
+	m = send(t, m, key("w"))
+	contains(t, m.View(), "maestro · workers of "+project.ID, "> claude-01", "STOPPED")
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "maestro · worker claude-01", "assignment:", "-")
+	// w only opens the workers from a project or its tasks.
+	m = send(t, m, key("w"))
+	contains(t, m.View(), "maestro · worker claude-01")
+	m = send(t, m, key("esc"))
+	m = send(t, m, key("esc"))
+	contains(t, m.View(), "maestro · tasks of "+project.ID)
+}
+
+func TestWorkersScreenShowsTheDaemonError(t *testing.T) {
+	socket, project := daemon(t)
+	m := start(t, Options{Socket: socket, Project: project})
+	m = send(t, m, key("w"))
+	// enter on an empty list opens nothing.
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "maestro · workers of "+project, "no workers")
+	m.screen, m.workerName = workerScreen, "missing"
+	m = send(t, m, key("r"))
+	contains(t, m.View(), "not_found: unknown worker in project "+project+": missing")
+
+	_, without, other := daemonWith(t, func(server *ipc.Server) { server.Workers = nil })
+	m = start(t, Options{Socket: without, Project: other.ID})
+	m = send(t, m, key("w"))
+	contains(t, m.View(), "maestro · workers of "+other.ID, "not_found: this daemon does not serve workers")
 }
 
 func TestProjectOptionOpensItsTasks(t *testing.T) {

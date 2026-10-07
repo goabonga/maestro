@@ -65,6 +65,10 @@ func (m Model) View() string {
 				m.viewTasks(&b)
 			case detailScreen:
 				m.viewDetail(&b)
+			case workersScreen:
+				m.viewWorkers(&b)
+			case workerScreen:
+				m.viewWorker(&b)
 			}
 		}
 	}
@@ -85,6 +89,10 @@ func (m Model) heading() string {
 		return "tasks of " + m.project
 	case detailScreen:
 		return "task " + m.taskID
+	case workersScreen:
+		return "workers of " + m.project
+	case workerScreen:
+		return "worker " + printable(m.workerName)
 	}
 	return "dashboard"
 }
@@ -96,11 +104,13 @@ func (m Model) help() string {
 	}
 	switch m.screen {
 	case tasksScreen:
+		return "↑/↓ select · enter show · w workers · esc back · a attach · r refresh · q quit"
+	case workersScreen:
 		return "↑/↓ select · enter show · esc back · a attach · r refresh · q quit"
-	case detailScreen:
+	case detailScreen, workerScreen:
 		return "esc back · a attach · r refresh · q quit"
 	}
-	return "↑/↓ select · enter tasks · a attach · r refresh · q quit"
+	return "↑/↓ select · enter tasks · w workers · a attach · r refresh · q quit"
 }
 
 // table renders rows aligned in columns, with a styled header and the
@@ -230,6 +240,75 @@ func (m Model) viewDetail(b *strings.Builder) {
 			event.At.Local().Format(time.DateTime), name, from, event.To, printable(event.Reason)))
 	}
 	b.WriteString("\n" + m.table("AT\tEVENT\tFROM\tTO\tREASON", rows, -1))
+}
+
+// orDash returns text, or "-" when it is empty.
+func orDash(text string) string {
+	if text == "" {
+		return "-"
+	}
+	return text
+}
+
+// viewWorkers renders the workers of the selected project.
+func (m Model) viewWorkers(b *strings.Builder) {
+	b.WriteString("\n")
+	if len(m.workers) == 0 {
+		b.WriteString("no workers\n")
+		return
+	}
+	rows := make([]string, 0, len(m.workers))
+	for i, w := range m.workers {
+		taskID, role := "-", "-"
+		if w.Assignment != nil {
+			taskID, role = w.Assignment.TaskID, w.Assignment.Role
+		}
+		rows = append(rows, fmt.Sprintf("%s%s\t%s\t%s\t%s\t%s\t%s\t%s", marker(i == m.workerCursor),
+			printable(w.Name), printable(w.Agent), w.State, taskID, role,
+			w.UpdatedAt.Local().Format(time.DateTime), summary(orDash(w.Reason))))
+	}
+	b.WriteString(m.table("  NAME\tAGENT\tSTATE\tTASK\tROLE\tUPDATED\tREASON", rows, m.workerCursor))
+}
+
+// viewWorker renders one worker and its recent events.
+func (m Model) viewWorker(b *strings.Builder) {
+	w := m.worker
+	fields := []string{
+		"project:\t" + w.ProjectID,
+		"agent:\t" + printable(w.Agent) + " (" + printable(w.AgentKind) + ")",
+		"driver:\t" + printable(w.Driver),
+		"state:\t" + w.State,
+	}
+	if w.Reason != "" {
+		fields = append(fields, "reason:\t"+printable(w.Reason))
+	}
+	if w.Assignment != nil {
+		fields = append(fields, "task:\t"+w.Assignment.TaskID, "role:\t"+w.Assignment.Role, "turn:\t"+w.Assignment.TurnID)
+	} else {
+		fields = append(fields, "assignment:\t-")
+	}
+	fields = append(fields,
+		"repository:\t"+printable(w.Repository),
+		"created:\t"+w.CreatedAt.Local().Format(time.DateTime),
+		"updated:\t"+w.UpdatedAt.Local().Format(time.DateTime),
+	)
+	var buffer bytes.Buffer
+	writer := tabwriter.NewWriter(&buffer, 0, 0, 2, ' ', 0)
+	for _, field := range fields {
+		fmt.Fprintln(writer, field)
+	}
+	_ = writer.Flush()
+	b.WriteString("\n" + buffer.String())
+	if len(w.Events) == 0 {
+		return
+	}
+	rows := make([]string, 0, len(w.Events))
+	for _, event := range w.Events {
+		rows = append(rows, fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s",
+			event.At.Local().Format(time.DateTime), event.Event, orDash(event.From), event.To,
+			orDash(event.TaskID), printable(event.Reason)))
+	}
+	b.WriteString("\n" + m.table("AT\tEVENT\tFROM\tTO\tTASK\tREASON", rows, -1))
 }
 
 // summary returns the first line of a description, shortened for a table.
