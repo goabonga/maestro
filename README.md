@@ -43,6 +43,12 @@ modified behind your back.
   it and terminates its session. Each worker is shown with its agent,
   driver, state, current assignment and recent events.
   [Command reference](docs/cli.md#workers)
+- **Pauses and resumes workers** (`maestro pause|resume <worker>`): a
+  pause interrupts the worker's turn, stops its agent and every process
+  it started, and blocks its task with its continuation; the worker
+  takes no new assignment until `maestro resume` brings its exact
+  conversation back, without prompting it.
+  [Command reference](docs/cli.md#workers)
 - **Drives tasks on the started workers**: each task goes through
   planning, implementation, the project's tests, review and corrections,
   one agent turn at a time, until it is ready to integrate or blocked
