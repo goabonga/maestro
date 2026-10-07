@@ -4,7 +4,8 @@
 // Package tui is the terminal dashboard of the maestro client: a Bubble
 // Tea program that reads the daemon's versioned API over its socket and
 // shows the daemon status, the registered projects, their tasks and one
-// task's history, refreshed periodically. It also attaches the terminal
+// task's history, their workers and one worker's recent events,
+// refreshed periodically. It also attaches the terminal
 // to a session, suspending itself for the time of the attach.
 package tui
 
@@ -45,6 +46,8 @@ const (
 	dashboardScreen screen = iota
 	tasksScreen
 	detailScreen
+	workersScreen
+	workerScreen
 )
 
 // tickMsg asks for a periodic refresh.
@@ -57,6 +60,8 @@ type refreshedMsg struct {
 	projects []projectDocument
 	tasks    []taskDocument
 	detail   taskDocument
+	workers  []workerDocument
+	worker   workerDocument
 	// err is set when the daemon could not be reached.
 	err error
 	// screenErr is set when the daemon answered the screen's request
@@ -70,11 +75,15 @@ type Model struct {
 	interval time.Duration
 	styles   styles
 
-	screen     screen
-	project    string
-	taskID     string
-	cursor     int
-	taskCursor int
+	screen       screen
+	project      string
+	taskID       string
+	workerName   string
+	cursor       int
+	taskCursor   int
+	workerCursor int
+	// workersFrom is the screen the workers screen returns to.
+	workersFrom screen
 
 	seq       int
 	loading   bool
@@ -85,6 +94,8 @@ type Model struct {
 	projects  []projectDocument
 	tasks     []taskDocument
 	detail    taskDocument
+	workers   []workerDocument
+	worker    workerDocument
 	width     int
 
 	// prompting is set while the attach prompt reads a session id into
@@ -134,7 +145,7 @@ func (m *Model) refresh() tea.Cmd {
 
 // fetch reads what the current screen shows, for refresh number m.seq.
 func (m Model) fetch() tea.Cmd {
-	c, current, project, id, seq := m.client, m.screen, m.project, m.taskID, m.seq
+	c, current, project, id, name, seq := m.client, m.screen, m.project, m.taskID, m.workerName, m.seq
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
@@ -150,6 +161,10 @@ func (m Model) fetch() tea.Cmd {
 			msg.tasks, msg.screenErr = c.tasks(ctx, project)
 		case detailScreen:
 			msg.detail, msg.screenErr = c.task(ctx, project, id)
+		case workersScreen:
+			msg.workers, msg.screenErr = c.workers(ctx, project)
+		case workerScreen:
+			msg.worker, msg.screenErr = c.worker(ctx, project, name)
 		}
 		if errors.Is(msg.screenErr, ErrUnreachable) {
 			msg.err, msg.screenErr = msg.screenErr, nil
@@ -206,6 +221,11 @@ func (m *Model) apply(msg refreshedMsg) {
 		m.taskCursor = clamp(m.taskCursor, len(m.tasks))
 	case detailScreen:
 		m.detail = msg.detail
+	case workersScreen:
+		m.workers = msg.workers
+		m.workerCursor = clamp(m.workerCursor, len(m.workers))
+	case workerScreen:
+		m.worker = msg.worker
 	}
 }
 
@@ -235,6 +255,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.move(1)
 	case "enter":
 		return m.open()
+	case "w":
+		return m.openWorkers()
 	case "esc", "backspace":
 		return m.back()
 	}
@@ -248,10 +270,12 @@ func (m *Model) move(delta int) {
 		m.cursor = clamp(m.cursor+delta, len(m.projects))
 	case tasksScreen:
 		m.taskCursor = clamp(m.taskCursor+delta, len(m.tasks))
+	case workersScreen:
+		m.workerCursor = clamp(m.workerCursor+delta, len(m.workers))
 	}
 }
 
-// open enters the selected project or task.
+// open enters the selected project, task or worker.
 func (m Model) open() (tea.Model, tea.Cmd) {
 	switch {
 	case m.screen == dashboardScreen && len(m.projects) > 0:
@@ -262,13 +286,41 @@ func (m Model) open() (tea.Model, tea.Cmd) {
 		m.screen, m.taskID = detailScreen, m.tasks[m.taskCursor].ID
 		m.detail, m.screenErr, m.loaded = taskDocument{}, nil, false
 		return m, m.refresh()
+	case m.screen == workersScreen && len(m.workers) > 0:
+		m.screen, m.workerName = workerScreen, m.workers[m.workerCursor].Name
+		m.worker, m.screenErr, m.loaded = workerDocument{}, nil, false
+		return m, m.refresh()
 	}
 	return m, nil
+}
+
+// openWorkers enters the workers of the selected project, from the
+// dashboard, or of the project whose tasks are shown.
+func (m Model) openWorkers() (tea.Model, tea.Cmd) {
+	switch {
+	case m.screen == dashboardScreen && len(m.projects) > 0:
+		m.project = m.projects[m.cursor].ID
+	case m.screen == tasksScreen:
+	default:
+		return m, nil
+	}
+	m.workersFrom, m.screen = m.screen, workersScreen
+	m.workers, m.workerCursor, m.screenErr, m.loaded = nil, 0, nil, false
+	return m, m.refresh()
 }
 
 // back returns to the previous screen.
 func (m Model) back() (tea.Model, tea.Cmd) {
 	switch m.screen {
+	case workerScreen:
+		m.screen, m.workerName, m.screenErr = workersScreen, "", nil
+		return m, m.refresh()
+	case workersScreen:
+		m.screen, m.screenErr = m.workersFrom, nil
+		if m.screen == dashboardScreen {
+			m.project = ""
+		}
+		return m, m.refresh()
 	case detailScreen:
 		m.screen, m.taskID, m.screenErr = tasksScreen, "", nil
 		return m, m.refresh()
