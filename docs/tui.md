@@ -22,7 +22,7 @@ tests     0     1
   PROJECT     STATE  REPOSITORY
 > 6b1f6d3a-…  ok     /home/me/src/app/.git
 
-↑/↓ select · enter tasks · r refresh · q quit
+↑/↓ select · enter tasks · a attach · r refresh · q quit
 ```
 
 ## Screens
@@ -44,9 +44,19 @@ tests     0     1
 | --- | --- |
 | `↑` / `↓` (or `k` / `j`) | move the selection |
 | `enter` | open the selected project or task |
+| `a` | attach the terminal to a session |
 | `esc` / `backspace` | go back to the previous screen |
 | `r` | refresh now |
 | `q` / `ctrl+c` | quit |
+
+## Attach
+
+`a` opens a prompt for a session id at the bottom of the screen; `enter`
+attaches the terminal to that session, as [`maestro attach`](cli.md)
+does, and `esc` closes the prompt. The dashboard is suspended for the
+time of the attach, which ends on `Ctrl-]` or with the session. The
+dashboard then resumes and reports `detached from <session>`, or the
+error that ended the attach, under its title.
 
 ## Options
 
