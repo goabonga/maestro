@@ -240,6 +240,30 @@ with it. A resumed agent that exits fails the worker like a session that
 ended on its own. A stop or `Close` waits for a change of rights in progress, and a session
 taken over for termination is never resumed.
 
+## Attach
+
+`Supervisor.Attach(project, name)` hands the live session of a started
+worker to one human pilot: it returns the session's terminal and the
+function that ends the attach.
+
+- The worker moves to `ATTACHED` with the `attach` event, applied to the
+  worker as it was read, so an assignment taken concurrently wins. The
+  turn is quiescent for an `IDLE` worker, which has none, and for a
+  `WAITING_INPUT` one, whose turn waits for the pilot; a `BUSY` worker's
+  turn is running, and its attach fails with `worker.ErrGuard`. A
+  worker already `ATTACHED` — one pilot at a time — or in any other
+  state, or without a live session in this supervisor, fails with
+  `worker.ErrTransition`; an unknown one with `worker.ErrNotFound`.
+- While the worker is `ATTACHED`, the engine neither assigns it a turn
+  nor writes to its terminal: it only drives `IDLE` workers, and the
+  table refuses `assign` in `ATTACHED`. The session keeps its slot and
+  its permissions profile.
+- Ending the attach applies `detach` when the client detached and
+  `connection-lost` otherwise. The effects and the continuation hold as
+  long as the session still runs in this supervisor, so the worker
+  returns to `IDLE`, or to `WAITING_INPUT` with its assignment; once
+  its session is ending or gone, it goes to `FAILED`.
+
 ## Startup reconciliation
 
 A daemon that starts holds no runtime: every session of the previous
@@ -298,12 +322,13 @@ stopped, paused or failed and leaves them unchanged.
 The daemon serves the registry on its versioned JSON API
 (`internal/ipc`, `workers.go`). `maestro-svc` wires `ipc.Server.Workers`
 to a `worker.Store` on its state database, and `ipc.Server.Supervisor`
-to a supervisor bounded by its session ceiling and confined by its
-launcher; a server without a store answers every worker route with
-`not_found`, and one without a supervisor answers the start and stop
-routes with `not_found`. Like the task routes, the reads name their
-project with `project_id` in the query and the mutations in their body;
-a worker of another project is not disclosed. Both mutations require an
+and `ipc.Server.Pilots` to a supervisor bounded by its session ceiling
+and confined by its launcher; a server without a store answers every
+worker route with `not_found`, one without a supervisor answers the
+start and stop routes with `not_found`, and one without pilots answers
+the stream route with `not_found`. Like the task routes, the reads
+name their project with `project_id` in the query and the mutations in
+their body; a worker of another project is not disclosed. Both mutations require an
 `Idempotency-Key`: a retry replays the first response.
 
 | Route | Body | Success |
@@ -312,10 +337,18 @@ a worker of another project is not disclosed. Both mutations require an
 | `GET /v1/workers/{name}?project_id=` | | `200`, the worker with its `events` |
 | `POST /v1/workers` | `{"project_id", "agent", "count"}` | `202`, the `STARTING` workers |
 | `POST /v1/workers/{name}/stop` | `{"project_id"}` | `200`, the `STOPPED` worker |
+| `GET /v1/workers/{name}/stream?project_id=` | | `101`, the worker's session stream, its client attached as pilot |
 
 A start takes and persists the configuration snapshot of the user's
 repository as it is now, like a new task, and the workers are
 provisioned from it.
+
+The stream route attaches its client through `Supervisor.Attach` before
+upgrading the connection, so a refused attach answers with the error
+envelope; the upgraded connection then carries the session's frames
+([PTY sessions](structure.md#pty-sessions)). A detach frame ends the attach
+with `detach`; any other end of the stream — a client that hangs up or
+reads too slowly, a session that ends — with `connection-lost`.
 
 A worker carries its `name`, `agent`, `agent_kind`, `driver`,
 `repository`, `state`, `version`, `reason`, `created_at`, `updated_at`
@@ -328,7 +361,8 @@ turn it is about, when there is one.
 | --- | --- | --- |
 | `invalid_request` | 400 | missing `project_id` or `agent`, a count below 1, an invalid configuration, or an agent without a validated driver |
 | `not_found` | 404 | unknown project, or a worker unknown in that project |
-| `conflict` | 409 | the session ceiling is reached, the agent's binary is missing or unreadable, the host cannot confine, the project's repository is missing, or the worker cannot stop in its state or is already being stopped |
+| `conflict` | 409 | the session ceiling is reached, the agent's binary is missing or unreadable, the host cannot confine, the project's repository is missing, the worker cannot stop in its state or is already being stopped, or it cannot be attached: its turn runs, a pilot is already attached, or it has no live session |
+| `invalid_request` | 426 | a stream request without `Upgrade: maestro-stream/1` |
 
 `maestro worker list` and `maestro worker show <name>` print these
 documents, and `maestro worker start <agent> [--count <n>]` and
