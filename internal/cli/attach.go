@@ -14,33 +14,32 @@ import (
 	"github.com/goabonga/maestro/internal/transport"
 )
 
-// attachCommand parses `maestro attach <session>` and attaches the
-// process's own terminal.
+// attachUsage is the usage of `maestro attach`.
+const attachUsage = "usage: maestro attach <worker> [--project <id>] [--socket <path>]"
+
+// attachCommand parses `maestro attach <worker>` and attaches the
+// process's own terminal as the worker's pilot, on the project of the
+// current repository or the one named by --project.
 func attachCommand(ctx context.Context, args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("maestro attach", flag.ContinueOnError)
 	flags.SetOutput(output)
 	socket := flags.String("socket", transport.DefaultSocket(), "daemon Unix socket path")
-	if err := flags.Parse(args); err != nil {
+	projectID := flags.String("project", "", "project id (default: the project of the current repository)")
+	positionals, err := parseInterleaved(flags, args)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
 	}
-	// Accept flags after the session too.
-	if flags.NArg() == 0 {
-		return errors.New("usage: maestro attach <session> [--socket <path>]")
+	if len(positionals) != 1 {
+		return errors.New(attachUsage)
 	}
-	target := flags.Arg(0)
-	if err := flags.Parse(flags.Args()[1:]); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
+	project, err := selectProject(*projectID)
+	if err != nil {
 		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("usage: maestro attach <session> [--socket <path>]")
 	}
 	winch, stop := attach.Resizes()
 	defer stop()
-	return attach.Run(ctx, *socket, target, attach.Terminal{In: os.Stdin, Out: output, Winch: winch})
+	return attach.Worker(ctx, *socket, project, positionals[0], attach.Terminal{In: os.Stdin, Out: output, Winch: winch})
 }
