@@ -22,7 +22,7 @@ tests     0     1
   PROJECT     STATE  REPOSITORY
 > 6b1f6d3a-…  ok     /home/me/src/app/.git
 
-↑/↓ select · enter tasks · a attach · r refresh · q quit
+↑/↓ select · enter tasks · w workers · a attach · : command · r refresh · q quit
 ```
 
 ## Screens
@@ -36,15 +36,26 @@ tests     0     1
   as `maestro task list` prints them.
 - **Task detail**: one task with its branch, base, configuration, fix
   cycles, full description and recorded events, as `maestro task show`
-  prints them.
+  prints them, and the workers assigned to it with their role and
+  state (`-` when none is).
+- **Workers**: the [workers](cli.md#workers) of the selected project, by
+  name, with their agent, state, assigned task and role, last update
+  and the reason of their last change, such as the cause of a failed
+  start. It opens with `w` on a project of the dashboard or from the
+  project's tasks, and `esc` returns there.
+- **Worker detail**: one worker with its agent, driver, state, reason,
+  assignment (task, role and turn), repository and its 20 most recent
+  events, as `maestro worker show` prints them.
 
 ## Keys
 
 | Key | Action |
 | --- | --- |
 | `↑` / `↓` (or `k` / `j`) | move the selection |
-| `enter` | open the selected project or task |
+| `enter` | open the selected project, task or worker |
+| `w` | open the workers of the selected project, or of the project whose tasks are shown |
 | `a` | attach the terminal to a session |
+| `:` | open the command bar |
 | `esc` / `backspace` | go back to the previous screen |
 | `r` | refresh now |
 | `q` / `ctrl+c` | quit |
@@ -57,6 +68,22 @@ does, and `esc` closes the prompt. The dashboard is suspended for the
 time of the attach, which ends on `Ctrl-]` or with the session. The
 dashboard then resumes and reports `detached from <session>`, or the
 error that ended the attach, under its title.
+
+## Command bar
+
+`:` opens a command bar at the bottom of the screen. A command acts on
+the project shown, or on the project selected on the dashboard; `enter`
+runs it and `esc` closes the bar without running anything.
+
+| Command | Action |
+| --- | --- |
+| `start <agent> [n]` | starts `n` workers of the agent (default 1), as `maestro worker start --count <n>` does; the daemon refuses a start above its session ceiling |
+| `stop <worker>` | stops the worker, as `maestro worker stop` does |
+
+The outcome replaces the line under the title: the names of the
+starting workers, the stopped worker's state, or the daemon's refusal.
+A started worker goes from `STARTING` to `IDLE`, or `FAILED` with its
+reason, on the workers screen as the dashboard refreshes.
 
 ## Options
 
