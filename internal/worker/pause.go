@@ -62,10 +62,10 @@ func (s *Supervisor) Settling(projectID, name string) (func(), <-chan struct{}) 
 // active interval charged and the task blocked with its continuation,
 // before the worker moves to PAUSED and releases its assignment. A
 // worker whose engine job is settling the end of its turn is paused
-// once the job has settled it. A worker in another state, without a live session, being stopped, torn
-// down or already paused is refused with ErrTransition. A group that
-// cannot be stopped, or a worker that changed state meanwhile, fails
-// the worker and terminates its session.
+// once the job has settled it. A worker in another state, without a
+// live session, being stopped, torn down or already paused is refused
+// with ErrTransition. A group that cannot be stopped, or a worker that
+// changed state meanwhile, fails the worker and terminates its session.
 func (s *Supervisor) Pause(projectID, name string) (Worker, error) {
 	s.init()
 	key := liveKey{projectID, name}

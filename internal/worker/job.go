@@ -252,10 +252,10 @@ func refused(err error) error {
 // exchange sends a prompt in an admitted turn and follows the turn
 // until the session detects its end or an input request, or the turn's
 // bound passes. The mark admit set ends once the prompt is sent: a
-// pause can then take the running turn. A completed turn has its rights revoked before it is
-// returned VALIDATING, so the agent cannot change the worktree while its
-// handoff is read; any other end is applied to the turn, the worker and
-// the task, and reported as ended.
+// pause can then take the running turn. A completed turn has its
+// rights revoked before it is returned VALIDATING, so the agent cannot
+// change the worktree while its handoff is read; any other end is
+// applied to the turn, the worker and the task, and reported as ended.
 func (j *job) exchange(ctx context.Context, u turn.Turn, prompt string) (turn.Turn, bool, error) {
 	u, err := j.e.turns().Transition(u.ID, turn.Running, "prompt sent to worker "+j.worker.Name)
 	if err != nil {
@@ -416,8 +416,8 @@ func (j *job) mark() {
 	j.held = true
 }
 
-// letGo ends the mark hold or admit set, if any: a pause can take the worker's
-// turn again.
+// letGo ends the mark hold or admit set, if any: a pause can take the
+// worker's turn again.
 func (j *job) letGo() {
 	if j.unhold != nil {
 		j.unhold()
