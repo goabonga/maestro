@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goabonga/maestro/internal/ipc"
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/transport"
 	"github.com/goabonga/maestro/internal/worker"
@@ -483,6 +484,48 @@ func TestRunServesWorkerStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Header.Set("Idempotency-Key", "start-1")
+	response, err := transport.Client(socket).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusNotFound || envelope.Error.Message != "unknown project: missing" {
+		t.Fatalf("%d %+v", response.StatusCode, envelope)
+	}
+
+	cancel()
+	if err := <-finished; err != nil {
+		t.Fatalf("daemon stopped with %v", err)
+	}
+}
+
+func TestRunServesWorkerAttaches(t *testing.T) {
+	t.Setenv("MAESTRO_DATA_HOME", shortDir(t))
+	socket := filepath.Join(shortDir(t), "svc.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	var output bytes.Buffer
+	go func() { finished <- run(ctx, []string{"--socket", socket}, &output) }()
+	waitForSocket(t, socket, finished)
+
+	// The worker stream route attaches through the supervisor: an
+	// unknown project is reported as such, not as a daemon that
+	// attaches no worker.
+	request, err := http.NewRequest(http.MethodGet, "http://maestro/v1/workers/claude-code-01/stream?project_id=missing", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Upgrade", ipc.StreamProtocol)
+	request.Header.Set("Connection", "Upgrade")
 	response, err := transport.Client(socket).Do(request)
 	if err != nil {
 		t.Fatal(err)
