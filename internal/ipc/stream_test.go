@@ -44,21 +44,28 @@ func confined(t *testing.T) *launcher.Launcher {
 // upgraded raw connection to its stream.
 func streamServer(t *testing.T, live *session.Session) net.Conn {
 	t.Helper()
+	server := &Server{Service: "maestro-svc", Version: "0.0.0", Sessions: fixedSessions{"s1": live}}
+	return upgradeStream(t, server.Handler(), "/v1/sessions/s1/stream")
+}
+
+// upgradeStream serves a handler on a Unix socket and returns a raw
+// connection upgraded to the stream at path.
+func upgradeStream(t *testing.T, handler http.Handler, path string) net.Conn {
+	t.Helper()
 	socket := filepath.Join(t.TempDir(), "svc.sock")
 	listener, err := transport.Listen(socket)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	server := &Server{Service: "maestro-svc", Version: "0.0.0", Sessions: fixedSessions{"s1": live}}
-	go func() { _ = http.Serve(listener, server.Handler()) }()
+	go func() { _ = http.Serve(listener, handler) }()
 
 	connection, err := net.DialTimeout("unix", socket, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = connection.Close() })
-	request := "GET /v1/sessions/s1/stream HTTP/1.1\r\nHost: maestro\r\n" +
+	request := "GET " + path + " HTTP/1.1\r\nHost: maestro\r\n" +
 		"Upgrade: " + StreamProtocol + "\r\nConnection: Upgrade\r\n\r\n"
 	if _, err := connection.Write([]byte(request)); err != nil {
 		t.Fatal(err)

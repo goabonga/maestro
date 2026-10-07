@@ -33,6 +33,10 @@ type Server struct {
 	// Sessions resolves streamable sessions; nil disables streaming.
 	Sessions SessionSource
 
+	// Pilots attaches a human pilot to the workers' live sessions; nil
+	// disables the worker stream route.
+	Pilots Pilots
+
 	// Tasks stores the tasks of the projects; nil disables the task
 	// routes.
 	Tasks *task.Store
