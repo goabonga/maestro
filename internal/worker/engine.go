@@ -307,19 +307,29 @@ func (e *Engine) abort(project worktree.Project, w Worker, cause string) error {
 		return err
 	}
 	closed := e.closeSession(project, w.Name)
+	return errors.Join(interruptTurn(e.workers(), u, w.Assignment.TaskID, reason, cause), closed)
+}
+
+// interruptTurn ends a turn no engine drives any more: the turn, unless
+// it already ended, is interrupted with the cause, the task's open
+// active interval charged and the task blocked with the reason and its
+// continuation, or on its time budget when it ran out of time. A task
+// that changed meanwhile is left as is.
+func interruptTurn(s Store, u turn.Turn, taskID, reason, cause string) error {
 	if !u.State.Terminal() {
-		if _, err := e.turns().Transition(u.ID, turn.Interrupted, cause); err != nil {
+		if _, err := (turn.Store{DB: s.DB, Now: s.Now}).Transition(u.ID, turn.Interrupted, cause); err != nil {
 			return err
 		}
 	}
-	_, err = e.budgets().Recover(w.Assignment.TaskID)
+	budgets := budget.Store{DB: s.DB, Now: s.Now}
+	_, err := budgets.Recover(taskID)
 	switch {
 	case errors.Is(err, budget.ErrExceeded) || errors.Is(err, budget.ErrClockRegression):
-		_, err = e.budgets().Block(w.Assignment.TaskID, err)
+		_, err = budgets.Block(taskID, err)
 	case err == nil:
-		_, err = e.tasks().Transition(w.Assignment.TaskID, task.Input{Event: task.Block, Reason: reason})
+		_, err = (task.Store{DB: s.DB, Now: s.Now}).Transition(taskID, task.Input{Event: task.Block, Reason: reason})
 	}
-	return errors.Join(refused(err), closed)
+	return refused(err)
 }
 
 // closeSession ends the live session of a worker the engine failed, if
