@@ -194,6 +194,29 @@ worker's events with the task and turn they are about
 (`maestro worker show`), the turns and their events, the accepted
 artifacts and the consumed budgets.
 
+## Pause
+
+A worker can be paused in the middle of a turn
+([Pausing and resuming](workers.md#pausing-and-resuming)). The pause
+then owns the turn: it stops the worker's group, interrupts the turn,
+charges the task's open active interval, blocks the task with its
+continuation and releases the worker's assignment. When `Sessions` also
+implements `Settling(project, name)`, as the supervisor does, the engine
+marks the worker as settling while it admits a turn — from before the
+worker takes the assignment until the turn is `RUNNING` and its prompt
+sent, through the task's assignment, the active interval's start and
+the checkout — and before it ends a turn on its own — a
+completed, failed or interrupted detection, an input request, a failed
+`Send` or `Settle`, an expired bound — and keeps the mark while it
+reads, verifies and accepts or rejects the handoff of a completed turn,
+until the task's transition is applied; it ends the mark before a
+format repair's turn runs. A pause asked meanwhile waits for the mark
+to end, so the turn is settled by one of them only. A pause already in
+progress is waited for instead; if the worker then no longer holds the
+turn's assignment, the pause took it: the engine drops the step's
+interval and applies nothing more to the turn, the worker or the task,
+so the paused worker is never failed for the group its pause stopped.
+
 ## In the daemon
 
 `maestro-svc` runs one engine on its state database, with its project

@@ -178,19 +178,23 @@ group is terminated (SIGTERM, then SIGKILL after the grace period), its
 slot released, and it takes the `drained` event to `STOPPED`. A `FAILED`
 worker takes the `stop` event to `STOPPED` once its group is gone,
 releasing the assignment it kept: when an earlier termination of its
-group failed, the stop retries it first. A worker that is `STARTING`,
-already `STOPPED`, live and holding an assignment, already being
-stopped by another call or being torn down after its session ended on
-its own is refused with `worker.ErrTransition`: stops of one worker
-never run concurrently. A
+group failed, the stop retries it first. A `PAUSED` worker has no group
+left: it is drained and stopped the same way, its kept native session
+and its slot released. A worker that is `STARTING`, already `STOPPED`,
+live and holding an assignment, already being stopped by another call,
+being paused or being torn down after its session ended on its own is
+refused with `worker.ErrTransition`: stops of one worker never run
+concurrently. A
 group that cannot be terminated leaves the worker `FAILED`, its slot
 held until the group ends, and a later stop that cannot terminate it
 either leaves it `FAILED` too.
 
-`Supervisor.Close` refuses new starts, abandons the starts in progress
-and stops every live worker; a live session a stop leaves behind is
-terminated anyway and its worker moved to `FAILED`, and the termination
-of every group an earlier teardown failed on is retried. `Close` then
+`Supervisor.Close` refuses new starts, abandons the starts in progress,
+waits for the pauses and resumes in progress and stops every live
+worker; a live session a stop leaves behind is terminated anyway and its
+worker moved to `FAILED`. A `PAUSED` worker stays `PAUSED`: its kept
+native session is released with its slot. The termination of every
+group an earlier teardown failed on is retried. `Close` then
 returns once every group is gone, or after `CloseTimeout` (ten seconds
 by default) when a group could not be terminated. `maestro-svc` calls it
 when it shuts down.
@@ -198,6 +202,67 @@ when it shuts down.
 `Supervisor.Ready`, when set, is called with the project of every
 started worker once it reaches `IDLE`; a worker whose start fails is not
 reported. `maestro-svc` drives the project's tasks from it.
+
+## Pausing and resuming
+
+`Supervisor.Pause(project, name)` pauses an `IDLE`, `BUSY` or
+`WAITING_INPUT` worker that has a live session in this supervisor:
+
+1. The worker leaves the live sessions, so `Session` no longer returns
+   it and the engine assigns it nothing new.
+2. Once a change of rights in progress is over, the agent is sent its
+   interrupt key (Esc), then the session's permissions epoch ends with
+   the reason `pause`: input is fenced and the whole confined group,
+   every descendant included, is stopped and confirmed gone.
+3. The turn the worker holds, if any, is interrupted (`INTERRUPTED`),
+   the open active interval of its task charged and the task `BLOCKED`
+   with its continuation, while the worker still holds the assignment,
+   so no other worker takes the task meanwhile. A task already blocked,
+   such as one waiting for input, stays as it is.
+4. The worker takes the `pause` event to `PAUSED`, with the facts the
+   table requires — interruption and stop of the descendants confirmed
+   — and releases its assignment. The write applies only to the worker
+   as it was read; a concurrent change makes the pause read it again.
+
+A paused worker keeps its native session — its confirmed identity and
+its supervisor lock — and its session slot: its group is gone, but its
+watcher waits for the resume, so a resume never waits for capacity. A
+worker in another state, without a live session in this supervisor,
+already being paused, being stopped or torn down is refused with
+`worker.ErrTransition`. A group that cannot be stopped, or a worker
+that changes state during the pause, fails the worker, terminates the
+session and releases its slot.
+
+The engine and a pause never act on the same turn at once.
+`Supervisor.Settling(project, name)` marks the worker as settling its
+turn, while the engine admits it until its prompt is sent and while it
+settles its end, and returns the function ending the mark; a pause asked
+meanwhile waits for it, then starts from the worker the engine left —
+an `IDLE` worker once the turn is accepted. While a pause is in
+progress, `Settling` marks nothing and returns a channel closed once the
+pause is over: the engine waits for it, and leaves a turn the pause took
+to it ([Task engine](task-engine.md#pause)).
+
+`Supervisor.Resume(project, name)` resumes a `PAUSED` worker whose
+session this supervisor kept. It validates the profile the agent
+resumes under — a `review` profile of the next epoch on the worktree's
+current revision, read-only as between two turns — and the continuation:
+the native identity is confirmed and is the one bound to the epoch, and
+that epoch ended at a reconciled boundary. The worker then takes the
+`resume` event to `STARTING` and is returned at once. In the background,
+the exact native conversation is resumed (`ClaudeResume` or
+`CodexResume`) in a new confined PTY; once its terminal settles, the
+worker takes the `ready` event to `IDLE`, with the resumed ID in its
+reason, and `Supervisor.Ready` reports it. A resume that fails
+terminates the session, releases the slot and moves the worker to
+`FAILED`. Nothing is prompted: a task the pause blocked waits for a task
+resume, and its next turn checks its branch out again before any prompt.
+
+A worker that is not `PAUSED`, being paused or being stopped is refused
+with `worker.ErrTransition`, as is a `PAUSED` worker whose session was
+lost with a previous daemon: the startup reconciliation leaves it
+`PAUSED`, and a stop releases it. A profile or a continuation that does
+not hold is refused with `worker.ErrGuard`, the worker staying `PAUSED`.
 
 ## Live sessions
 
@@ -226,7 +291,8 @@ exact confirmed native conversation (`ClaudeResume` or `CodexResume`) in
 a new confined PTY under a `review` profile of the next epoch, where the
 worktree and the worker repository are read-only; once it returns nil,
 the agent cannot write the task's sources. The next `Send` resumes it
-the same way under a `coding` profile before writing its prompt. A
+the same way under a `coding` profile before writing its prompt; a paused
+session is never resumed this way, only by `Supervisor.Resume`. A
 resumed agent is ready for a prompt once its terminal has drawn
 something and stayed quiet for 300 ms, at most the start timeout. The
 detector's own turn and input-wait bounds are set to 24 hours: the
@@ -300,11 +366,12 @@ The daemon serves the registry on its versioned JSON API
 to a `worker.Store` on its state database, and `ipc.Server.Supervisor`
 to a supervisor bounded by its session ceiling and confined by its
 launcher; a server without a store answers every worker route with
-`not_found`, and one without a supervisor answers the start and stop
-routes with `not_found`. Like the task routes, the reads name their
-project with `project_id` in the query and the mutations in their body;
-a worker of another project is not disclosed. Both mutations require an
-`Idempotency-Key`: a retry replays the first response.
+`not_found`, and one without a supervisor answers the start, stop,
+pause and resume routes with `not_found`. Like the task routes, the
+reads name their project with `project_id` in the query and the
+mutations in their body; a worker of another project is not disclosed.
+Every mutation requires an `Idempotency-Key`: a retry replays the first
+response.
 
 | Route | Body | Success |
 | --- | --- | --- |
@@ -312,6 +379,8 @@ a worker of another project is not disclosed. Both mutations require an
 | `GET /v1/workers/{name}?project_id=` | | `200`, the worker with its `events` |
 | `POST /v1/workers` | `{"project_id", "agent", "count"}` | `202`, the `STARTING` workers |
 | `POST /v1/workers/{name}/stop` | `{"project_id"}` | `200`, the `STOPPED` worker |
+| `POST /v1/workers/{name}/pause` | `{"project_id"}` | `200`, the `PAUSED` worker |
+| `POST /v1/workers/{name}/resume` | `{"project_id"}` | `202`, the `STARTING` worker |
 
 A start takes and persists the configuration snapshot of the user's
 repository as it is now, like a new task, and the workers are
@@ -328,11 +397,12 @@ turn it is about, when there is one.
 | --- | --- | --- |
 | `invalid_request` | 400 | missing `project_id` or `agent`, a count below 1, an invalid configuration, or an agent without a validated driver |
 | `not_found` | 404 | unknown project, or a worker unknown in that project |
-| `conflict` | 409 | the session ceiling is reached, the agent's binary is missing or unreadable, the host cannot confine, the project's repository is missing, or the worker cannot stop in its state or is already being stopped |
+| `conflict` | 409 | the session ceiling is reached, the agent's binary is missing or unreadable, the host cannot confine, the project's repository is missing, the worker cannot stop, pause or resume in its state, is already being stopped or paused, or its paused session was lost with a previous daemon, or the profile or continuation of a resume does not hold |
 
 `maestro worker list` and `maestro worker show <name>` print these
-documents, and `maestro worker start <agent> [--count <n>]` and
-`maestro worker stop <name>` call the mutations, on the project of the
-current repository or the one named by `--project <id>`. `start`
-follows each worker until it is `IDLE` or `FAILED` and fails when one of
-them failed.
+documents, and `maestro worker start <agent> [--count <n>]`, `maestro
+worker stop <name>`, `maestro pause <worker>` and `maestro resume
+<worker>` call the mutations, on the project of the current repository
+or the one named by `--project <id>`. `start` follows each worker until
+it is `IDLE` or `FAILED` and fails when one of them failed; `resume`
+follows the worker the same way.
