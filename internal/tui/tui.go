@@ -5,7 +5,7 @@
 // Tea program that reads the daemon's versioned API over its socket and
 // shows the daemon status, the registered projects, their tasks and one
 // task's history, their workers and one worker's recent events,
-// refreshed periodically. It also attaches the terminal
+// refreshed periodically. Its command bar starts and stops workers. It also attaches the terminal
 // to a session, suspending itself for the time of the attach.
 package tui
 
@@ -108,8 +108,12 @@ type Model struct {
 	// prompting is set while the attach prompt reads a session id into
 	// input.
 	prompting bool
-	input     string
-	// notice and noticeErr report the outcome of the last attach.
+	// commanding is set while the command bar reads a command into
+	// input.
+	commanding bool
+	input      string
+	// notice and noticeErr report the outcome of the last attach or
+	// command.
 	notice    string
 	noticeErr error
 }
@@ -207,9 +211,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.prompting {
 			return m.promptKey(msg)
 		}
+		if m.commanding {
+			return m.commandKey(msg)
+		}
 		return m.key(msg)
 	case attachedMsg:
 		return m.attached(msg)
+	case commandedMsg:
+		return m.commanded(msg)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		return m, nil
@@ -277,6 +286,8 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.refresh()
 	case "a":
 		m.prompting, m.input = true, ""
+	case ":":
+		m.commanding, m.input = true, ""
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":

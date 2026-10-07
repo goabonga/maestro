@@ -9,8 +9,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/goabonga/maestro/internal/ipc"
+	"github.com/goabonga/maestro/internal/launcher"
 	"github.com/goabonga/maestro/internal/scheduler"
 	"github.com/goabonga/maestro/internal/state"
 	"github.com/goabonga/maestro/internal/task"
@@ -128,8 +131,9 @@ func createTask(t *testing.T, socket, project, description string) string {
 	return envelope.Data.ID
 }
 
-// send applies msg to the model, then runs the refresh the model asks
-// for, if any, and applies its result.
+// send applies msg to the model, then runs the command or refresh the
+// model asks for, if any, and applies its result and the refresh that
+// follows.
 func send(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
 	next, cmd := m.Update(msg)
@@ -137,11 +141,20 @@ func send(t *testing.T, m Model, msg tea.Msg) Model {
 	if cmd == nil {
 		return m
 	}
-	if result, ok := cmd().(refreshedMsg); ok {
+	switch result := cmd().(type) {
+	case refreshedMsg:
 		next, _ = m.Update(result)
 		m = next.(Model)
+	case commandedMsg:
+		m = send(t, m, result)
 	}
 	return m
+}
+
+// typeIn types a text in the open prompt or command bar.
+func typeIn(t *testing.T, m Model, text string) Model {
+	t.Helper()
+	return send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
 }
 
 // start returns a model with its first refresh applied.
@@ -498,4 +511,173 @@ func TestRunStopsWithItsContext(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the program ignores its context")
 	}
+}
+
+func TestCommandBarEditsAndCancels(t *testing.T) {
+	socket, _ := daemon(t)
+	m := start(t, Options{Socket: socket})
+	contains(t, m.View(), ": command")
+
+	m = send(t, m, key(":"))
+	contains(t, m.View(), ":▏", "enter run · esc cancel", "start <agent> [n]", "stop <worker>")
+	// Keys go to the bar: q types, it does not quit.
+	for _, k := range []tea.KeyMsg{key("q"), {Type: tea.KeySpace, Runes: []rune(" ")}, key("x\x1b")} {
+		next, cmd := m.Update(k)
+		if cmd != nil {
+			t.Fatalf("%q ran a command in the bar", k.String())
+		}
+		m = next.(Model)
+	}
+	contains(t, m.View(), ":q x▏")
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+	contains(t, m.View(), ":q ▏")
+
+	m = send(t, m, key("esc"))
+	if strings.Contains(m.View(), "enter run") {
+		t.Fatalf("esc left the bar open:\n%s", m.View())
+	}
+	contains(t, m.View(), "maestro · dashboard")
+
+	m = send(t, m, key(":"))
+	next, cmd := m.Update(key("enter"))
+	if cmd != nil || next.(Model).commanding {
+		t.Fatal("an empty command ran")
+	}
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c does not quit from the bar")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("ctrl+c does not quit from the bar")
+	}
+}
+
+func TestCommandBarRefusesInvalidCommands(t *testing.T) {
+	socket, _ := daemon(t)
+	m := start(t, Options{Socket: socket})
+	for line, want := range map[string]string{
+		"pause claude-01":     `unknown command "pause claude-01"; commands: start <agent> [n] · stop <worker>`,
+		"start":               "unknown command",
+		"start claude 2 more": "unknown command",
+		"stop":                "unknown command",
+		"stop a b":            "unknown command",
+		"start claude 0":      `start: the count must be a number of at least 1, not "0"`,
+		"start claude two":    `not "two"`,
+	} {
+		m = send(t, m, key(":"))
+		m = typeIn(t, m, line)
+		next, cmd := m.Update(key("enter"))
+		m = next.(Model)
+		if cmd != nil {
+			t.Fatalf("%q sent a request", line)
+		}
+		contains(t, m.View(), want)
+	}
+
+	// Without a project, nothing is sent.
+	empty := New(Options{Socket: socket})
+	empty = send(t, empty, key(":"))
+	empty = typeIn(t, empty, "stop claude-01")
+	next, cmd := empty.Update(key("enter"))
+	if cmd != nil {
+		t.Fatal("a command without a project sent a request")
+	}
+	contains(t, next.(Model).View(), "no project selected")
+}
+
+func TestCommandBarReportsTheDaemonRefusal(t *testing.T) {
+	socket, project := daemon(t)
+	m := start(t, Options{Socket: socket, Project: project})
+	m = send(t, m, key(":"))
+	m = typeIn(t, m, "start claude-code 2")
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "start claude-code: not_found: this daemon does not start workers", "maestro · tasks of "+project)
+
+	m = send(t, m, key(":"))
+	m = typeIn(t, m, "stop \x1b[2Jclaude-01")
+	m = send(t, m, key("enter"))
+	if strings.Contains(m.View(), "\x1b") {
+		t.Fatalf("view carries an escape sequence: %q", m.View())
+	}
+	contains(t, m.View(), "stop [2Jclaude-01: not_found")
+}
+
+// claudeFixture answers --version like Claude Code, records its chosen
+// session in its private configuration, as Claude Code does, then waits
+// on its terminal.
+const claudeFixture = `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.289 (Claude Code)"; exit 0; fi
+mkdir -p "$CLAUDE_CONFIG_DIR/projects/fixture"
+printf '{"sessionId":"%s","cwd":"%s","version":"2.1.289"}\n' "$2" "$PWD" > "$CLAUDE_CONFIG_DIR/projects/fixture/$2.jsonl"
+exec cat
+`
+
+func TestCommandBarStartsAndStopsWorkers(t *testing.T) {
+	confined, err := launcher.New()
+	if errors.Is(err, launcher.ErrUnsupported) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(claudeFixture), 0o700); err != nil { // #nosec G306 -- an executable fixture
+		t.Fatal(err)
+	}
+	server, socket, project := daemonWith(t, func(server *ipc.Server) {
+		capacity, err := scheduler.NewCapacity(2, 1, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server.Capacity = capacity
+		server.Supervisor = &worker.Supervisor{
+			Store: *server.Workers, Projects: server.Store, Capacity: capacity, Launcher: confined,
+			LookPath:     func(name string) (string, error) { return filepath.Join(bin, name), nil },
+			StartTimeout: 15 * time.Second, StopGrace: 200 * time.Millisecond,
+		}
+		t.Cleanup(server.Supervisor.Close)
+	})
+	m := start(t, Options{Socket: socket})
+	m = send(t, m, key("w"))
+
+	m = send(t, m, key(":"))
+	m = typeIn(t, m, "start claude-code 2")
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "starting claude-code-01, claude-code-02", "maestro · workers of "+project.ID, "claude-code-01", "claude-code-02")
+	for _, name := range []string{"claude-code-01", "claude-code-02"} {
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			w, err := server.Workers.Get(project.ID, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w.State == worker.Idle {
+				break
+			}
+			if w.State != worker.Starting || time.Now().After(deadline) {
+				t.Fatalf("%s is %s: %s", name, w.State, w.Reason)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	m = send(t, m, key("r"))
+	contains(t, m.View(), "IDLE")
+
+	// The session ceiling bounds the start.
+	m = send(t, m, key(":"))
+	m = typeIn(t, m, "start claude-code")
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "start claude-code: conflict:", "capacity exhausted")
+
+	m = send(t, m, key(":"))
+	m = typeIn(t, m, "stop claude-code-01")
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "claude-code-01: STOPPED")
+	if strings.Contains(m.View(), "start claude-code: conflict") {
+		t.Fatalf("the notice kept the previous outcome:\n%s", m.View())
+	}
+	m = send(t, m, key(":"))
+	m = typeIn(t, m, "stop claude-code-01")
+	m = send(t, m, key("enter"))
+	contains(t, m.View(), "stop claude-code-01: conflict:")
 }
