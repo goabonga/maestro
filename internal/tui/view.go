@@ -206,6 +206,13 @@ func (m Model) viewDetail(b *strings.Builder) {
 	if t.HeadSHA != "" {
 		fields = append(fields, "head:\t"+t.HeadSHA)
 	}
+	if m.driversKnown {
+		drivers := make([]string, 0, len(m.drivers))
+		for _, w := range m.drivers {
+			drivers = append(drivers, printable(w.Name)+" ("+w.Assignment.Role+", "+w.State+")")
+		}
+		fields = append(fields, "worker:\t"+orDash(strings.Join(drivers, ", ")))
+	}
 	fields = append(fields,
 		"config:\t"+t.ConfigID,
 		fmt.Sprintf("fix cycles:\t%d/%d", t.FixCycles, t.MaxFixCycles),
