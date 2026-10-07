@@ -189,11 +189,12 @@ func TestShowWorkerKeepsOnlyTheRecentEvents(t *testing.T) {
 
 // claudeFixture stands for Claude Code: it answers --version on the
 // host, and in its confined PTY records its chosen session in its
-// private configuration, then waits on its terminal.
+// private configuration, draws its terminal, then waits on it.
 const claudeFixture = `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "2.1.289 (Claude Code)"; exit 0; fi
 mkdir -p "$CLAUDE_CONFIG_DIR/projects/fixture"
 printf '{"sessionId":"%s","cwd":"%s","version":"2.1.289"}\n' "$2" "$PWD" > "$CLAUDE_CONFIG_DIR/projects/fixture/$2.jsonl"
+echo READY
 exec cat
 `
 
@@ -255,8 +256,10 @@ func awaitWorker(t *testing.T, web *httptest.Server, project worktree.Project, n
 func TestWorkerStartAndStopNeedASupervisor(t *testing.T) {
 	_, web, project := workerServer(t)
 	for path, document := range map[string]string{
-		"/v1/workers":                `{"project_id": "` + project.ID + `", "agent": "claude-code", "count": 1}`,
-		"/v1/workers/claude-01/stop": `{"project_id": "` + project.ID + `"}`,
+		"/v1/workers":                  `{"project_id": "` + project.ID + `", "agent": "claude-code", "count": 1}`,
+		"/v1/workers/claude-01/stop":   `{"project_id": "` + project.ID + `"}`,
+		"/v1/workers/claude-01/pause":  `{"project_id": "` + project.ID + `"}`,
+		"/v1/workers/claude-01/resume": `{"project_id": "` + project.ID + `"}`,
 	} {
 		status, envelope, raw := call(t, web, "POST", path, map[string]string{"Idempotency-Key": path}, document)
 		if status != http.StatusNotFound || envelope.Error == nil || envelope.Error.Message != "this daemon does not start workers" {
@@ -321,5 +324,52 @@ func TestStartWorkersUpToCapacityThenStopThem(t *testing.T) {
 		if status != want {
 			t.Fatalf("%s: status=%d body=%s", path, status, raw)
 		}
+	}
+}
+
+func TestPauseAndResumeAWorker(t *testing.T) {
+	server, web, project := supervisedServer(t, 1)
+	start := `{"project_id": "` + project.ID + `", "agent": "claude-code", "count": 1}`
+	if status, _, raw := call(t, web, "POST", "/v1/workers", map[string]string{"Idempotency-Key": "s1"}, start); status != http.StatusAccepted {
+		t.Fatalf("start: status=%d body=%s", status, raw)
+	}
+	awaitWorker(t, web, project, "claude-code-01", worker.Idle)
+
+	body := `{"project_id": "` + project.ID + `"}`
+	status, envelope, raw := call(t, web, "POST", "/v1/workers/claude-code-01/pause", map[string]string{"Idempotency-Key": "p1"}, body)
+	if status != http.StatusOK || decodeWorkers[workerView](t, envelope).State != string(worker.Paused) {
+		t.Fatalf("pause: status=%d body=%s", status, raw)
+	}
+	// A retry with the same key replays the pause; a new one conflicts.
+	if replayed, _, again := call(t, web, "POST", "/v1/workers/claude-code-01/pause", map[string]string{"Idempotency-Key": "p1"}, body); replayed != http.StatusOK || string(again) != string(raw) {
+		t.Fatalf("replay: status=%d body=%s", replayed, again)
+	}
+	if used := server.Capacity.Usage()[scheduler.Sessions].Used; used != 1 {
+		t.Fatalf("the paused worker released its slot: %d used", used)
+	}
+	for path, want := range map[string]int{
+		"/v1/workers/claude-code-01/pause": http.StatusConflict,
+		"/v1/workers/missing/pause":        http.StatusNotFound,
+		"/v1/workers/missing/resume":       http.StatusNotFound,
+	} {
+		status, _, raw := call(t, web, "POST", path, map[string]string{"Idempotency-Key": "again" + path}, body)
+		if status != want {
+			t.Fatalf("%s: status=%d body=%s", path, status, raw)
+		}
+	}
+	if status, _, raw := call(t, web, "POST", "/v1/workers/claude-code-01/pause", map[string]string{"Idempotency-Key": "bad"}, `{}`); status != http.StatusBadRequest {
+		t.Fatalf("pause without a project: status=%d body=%s", status, raw)
+	}
+
+	status, envelope, raw = call(t, web, "POST", "/v1/workers/claude-code-01/resume", map[string]string{"Idempotency-Key": "r1"}, body)
+	if status != http.StatusAccepted || decodeWorkers[workerView](t, envelope).State != string(worker.Starting) {
+		t.Fatalf("resume: status=%d body=%s", status, raw)
+	}
+	idle := awaitWorker(t, web, project, "claude-code-01", worker.Idle)
+	if !strings.Contains(idle.Reason, "resumed") {
+		t.Fatalf("idle=%+v", idle)
+	}
+	if status, _, raw := call(t, web, "POST", "/v1/workers/claude-code-01/resume", map[string]string{"Idempotency-Key": "r2"}, body); status != http.StatusConflict {
+		t.Fatalf("resume of an IDLE worker: status=%d body=%s", status, raw)
 	}
 }
