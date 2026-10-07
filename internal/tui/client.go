@@ -4,7 +4,10 @@
 package tui
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,7 +76,7 @@ type taskDocument struct {
 	Events        []eventDocument `json:"events"`
 }
 
-// client reads the daemon's versioned API over its socket.
+// client calls the daemon's versioned API over its socket.
 type client struct {
 	socket string
 	http   *http.Client
@@ -85,12 +88,41 @@ func newClient(socket string) client {
 }
 
 // get sends one read request and decodes the data of the envelope into
-// data. A failed connection wraps ErrUnreachable; an error envelope
-// becomes an error naming its code.
+// data.
 func (c client) get(ctx context.Context, path string, data any) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://maestro"+path, nil)
+	return c.call(ctx, http.MethodGet, path, nil, data)
+}
+
+// post sends one mutation with a fresh Idempotency-Key and decodes the
+// data of the envelope into data.
+func (c client) post(ctx context.Context, path string, body, data any) error {
+	return c.call(ctx, http.MethodPost, path, body, data)
+}
+
+// call sends one request and decodes the data of the envelope into
+// data; a request other than a read carries a JSON body and a fresh
+// Idempotency-Key. A failed connection wraps ErrUnreachable; an error
+// envelope becomes an error naming its code.
+func (c client) call(ctx context.Context, method, path string, body, data any) error {
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, "http://maestro"+path, reader)
 	if err != nil {
 		return err
+	}
+	if method != http.MethodGet {
+		key, err := idempotencyKey()
+		if err != nil {
+			return err
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Idempotency-Key", key)
 	}
 	response, err := c.http.Do(request)
 	if err != nil {
@@ -111,6 +143,15 @@ func (c client) get(ctx context.Context, path string, data any) error {
 		return fmt.Errorf("daemon returned %s", response.Status)
 	}
 	return json.Unmarshal(envelope.Data, data)
+}
+
+// idempotencyKey returns a random key for one mutation.
+func idempotencyKey() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // status reads the daemon identity and capacity.
@@ -186,4 +227,20 @@ func (c client) worker(ctx context.Context, project, name string) (workerDocumen
 	var w workerDocument
 	err := c.get(ctx, "/v1/workers/"+url.PathEscape(name)+"?project_id="+url.QueryEscape(project), &w)
 	return w, err
+}
+
+// startWorkers asks the daemon to start count workers of an agent of a
+// project; it answers with the STARTING workers.
+func (c client) startWorkers(ctx context.Context, project, agent string, count int) ([]workerDocument, error) {
+	var started []workerDocument
+	body := map[string]any{"project_id": project, "agent": agent, "count": count}
+	err := c.post(ctx, "/v1/workers", body, &started)
+	return started, err
+}
+
+// stopWorker asks the daemon to stop a worker of a project.
+func (c client) stopWorker(ctx context.Context, project, name string) (workerDocument, error) {
+	var stopped workerDocument
+	err := c.post(ctx, "/v1/workers/"+url.PathEscape(name)+"/stop", map[string]string{"project_id": project}, &stopped)
+	return stopped, err
 }

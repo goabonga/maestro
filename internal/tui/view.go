@@ -75,6 +75,9 @@ func (m Model) View() string {
 	if m.prompting {
 		b.WriteString("\nattach to session: " + m.input + "▏\n")
 	}
+	if m.commanding {
+		b.WriteString("\n:" + printable(m.input) + "▏\n")
+	}
 	b.WriteString("\n" + m.styles.help.Render(m.help()) + "\n")
 	if m.width > 0 {
 		return m.styles.frame.MaxWidth(m.width).Render(b.String())
@@ -102,15 +105,18 @@ func (m Model) help() string {
 	if m.prompting {
 		return "enter attach · esc cancel · Ctrl-] detaches once attached"
 	}
+	if m.commanding {
+		return "enter run · esc cancel · " + commandUsage
+	}
 	switch m.screen {
 	case tasksScreen:
-		return "↑/↓ select · enter show · w workers · esc back · a attach · r refresh · q quit"
+		return "↑/↓ select · enter show · w workers · esc back · a attach · : command · r refresh · q quit"
 	case workersScreen:
-		return "↑/↓ select · enter show · esc back · a attach · r refresh · q quit"
+		return "↑/↓ select · enter show · esc back · a attach · : command · r refresh · q quit"
 	case detailScreen, workerScreen:
-		return "esc back · a attach · r refresh · q quit"
+		return "esc back · a attach · : command · r refresh · q quit"
 	}
-	return "↑/↓ select · enter tasks · w workers · a attach · r refresh · q quit"
+	return "↑/↓ select · enter tasks · w workers · a attach · : command · r refresh · q quit"
 }
 
 // table renders rows aligned in columns, with a styled header and the
