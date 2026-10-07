@@ -6,7 +6,8 @@
 // shows the daemon status, the registered projects, their tasks and one
 // task's history, their workers and one worker's recent events,
 // refreshed periodically. Its command bar starts and stops workers. It also attaches the terminal
-// to a session, suspending itself for the time of the attach.
+// to a worker's live session as its pilot, suspending itself for the time
+// of the attach.
 package tui
 
 import (
@@ -105,9 +106,6 @@ type Model struct {
 	driversKnown bool
 	width        int
 
-	// prompting is set while the attach prompt reads a session id into
-	// input.
-	prompting bool
 	// commanding is set while the command bar reads a command into
 	// input.
 	commanding bool
@@ -208,9 +206,6 @@ func assigned(ctx context.Context, c client, project, id string) ([]workerDocume
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if m.prompting {
-			return m.promptKey(msg)
-		}
 		if m.commanding {
 			return m.commandKey(msg)
 		}
@@ -285,7 +280,7 @@ func (m Model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, m.refresh()
 	case "a":
-		m.prompting, m.input = true, ""
+		return m.attachSelected()
 	case ":":
 		m.commanding, m.input = true, ""
 	case "up", "k":
