@@ -107,6 +107,14 @@ its waiting worker: a resume takes effect only once the input wait has
 expired and failed the worker, or the worker has released the
 assignment.
 
+`maestro pause <worker>` stops a worker in the middle of a task without
+losing its conversation: its current turn is interrupted, the agent and
+every process it started are stopped, and the task is blocked with its
+continuation, the worker releasing it. `maestro resume <worker>` brings
+the worker back `IDLE` on the same conversation, without prompting it;
+`maestro task resume` then continues the task from the step its pause
+stopped, on the first `IDLE` worker.
+
 ## Update the configuration
 
 A task keeps the configuration snapshot it was created with. `maestro
