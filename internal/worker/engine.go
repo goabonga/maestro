@@ -69,6 +69,15 @@ type Sessions interface {
 	Session(projectID, name string) (Session, bool)
 }
 
+// pauses is implemented by the Sessions that pause workers, such as the
+// Supervisor: Settling marks the worker as settling the end of its
+// turn, no pause taking the turn until the returned function ends the
+// mark; while a pause of the worker is in progress, it marks nothing and
+// returns a channel closed once the pause is over.
+type pauses interface {
+	Settling(projectID, name string) (func(), <-chan struct{})
+}
+
 // Tester runs test commands against one exact revision of a repository
 // in a fresh clone; *testrun.Runner is one.
 type Tester interface {

@@ -158,9 +158,13 @@ func (l *liveSession) Close() error {
 // is stopped and confirmed gone, then the exact native conversation is
 // resumed in a new confined PTY with the role's rights, and the agent's
 // terminal is given time to settle. The caller holds live.turn. A session
-// taken over for termination is never resumed.
+// taken over for termination or paused is never resumed here.
 func (s *Supervisor) replace(key liveKey, live *running, role session.Role) error {
 	s.mu.Lock()
+	if live.paused {
+		s.mu.Unlock()
+		return fmt.Errorf("the session of %s is paused", key.name)
+	}
 	if live.stopping || live.ended || s.closed {
 		s.mu.Unlock()
 		return fmt.Errorf("the session of %s is ending", key.name)
