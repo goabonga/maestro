@@ -95,7 +95,17 @@ type Supervisor struct {
 	// failing holds the workers whose session a watcher or Close tears
 	// down without a Stop, until their failure is recorded: no Stop takes
 	// them meanwhile and their name is not reused.
-	failing  map[liveKey]bool
+	failing map[liveKey]bool
+	// paused holds the sessions of the PAUSED workers: their group is
+	// gone, their native session kept for their resume, their slot held.
+	paused map[liveKey]*running
+	// pausing holds the workers a Pause is in progress for, with the
+	// channel closed once it is over.
+	pausing map[liveKey]chan struct{}
+	// settling holds the workers whose engine job settles the end of a
+	// turn, with the channel closed once it is over: a Pause waits for
+	// it before it takes the turn.
+	settling map[liveKey]chan struct{}
 	closed   bool
 	done     chan struct{}
 	launches sync.WaitGroup
@@ -134,6 +144,9 @@ type running struct {
 	stopping bool
 	// ended is set by the watcher once the group is gone.
 	ended bool
+	// paused marks a session a Pause took: it is never resumed by a
+	// change of rights, only by a Resume.
+	paused bool
 }
 
 // StartRequest asks for workers of one agent of a project.
@@ -167,6 +180,9 @@ func (s *Supervisor) init() {
 		s.stopping = map[liveKey]bool{}
 		s.ending = map[liveKey]*running{}
 		s.failing = map[liveKey]bool{}
+		s.paused = map[liveKey]*running{}
+		s.pausing = map[liveKey]chan struct{}{}
+		s.settling = map[liveKey]chan struct{}{}
 		s.done = make(chan struct{})
 	})
 }
@@ -549,7 +565,9 @@ func writeMCP(home string, servers map[string]config.MCP, agentName, kind string
 // watch waits for a session's group to end, then releases its slot: the
 // group is gone, so the slot no longer counts. A group stopped by a
 // change of rights is followed by the one that resumes the conversation,
-// if it started. A started worker whose
+// if it started; a paused group keeps its slot until its worker is
+// resumed, then the resumed group is followed, or stopped. A started
+// worker whose
 // session ends on its own is moved to FAILED; until that failure is
 // recorded, the worker is marked failing, so that no Stop moves it to
 // STOPPED and no Start reuses its name meanwhile.
@@ -560,6 +578,9 @@ func (s *Supervisor) watch(key liveKey, live *running) {
 		current.Wait()
 		s.mu.Lock()
 		replacing := live.replacing
+		if replacing == nil {
+			live.ended = true
+		}
 		s.mu.Unlock()
 		if replacing == nil {
 			break
@@ -650,30 +671,34 @@ func (s *Supervisor) fail(projectID, name, reason string) {
 
 // Stop stops a worker. A live worker is drained — DRAINING, so it takes
 // no new assignment — then its confined group is terminated, its slot
-// released, and it reaches STOPPED. A FAILED worker is moved to STOPPED
-// once its group is gone, releasing the assignment it kept: the
-// termination of a group a previous teardown failed on is retried first.
-// A worker that is starting, already stopped, live and holding an
-// assignment, already being stopped by another Stop
-// or whose session is being torn down without a Stop is refused with
+// released, and it reaches STOPPED. A PAUSED worker has no group left:
+// its kept native session is released with its slot. A FAILED worker is
+// moved to STOPPED once its group is gone, releasing the assignment it
+// kept: the termination of a group a previous teardown failed on is
+// retried first. A worker that is starting, already stopped, live and
+// holding an assignment, already being stopped by another Stop, being
+// paused, or whose session is being torn down without a Stop is refused with
 // ErrTransition. A group that cannot be terminated
 // leaves the worker FAILED and keeps its slot until the group is gone.
 func (s *Supervisor) Stop(projectID, name string) (Worker, error) {
 	s.init()
 	key := liveKey{projectID, name}
 	s.mu.Lock()
-	busy, failing := s.stopping[key], s.failing[key]
-	if !busy && !failing {
+	busy, failing, pausing := s.stopping[key], s.failing[key], s.pausing[key] != nil
+	if !busy && !failing && !pausing {
 		s.stopping[key] = true
 	}
 	s.mu.Unlock()
-	if busy || failing {
+	if busy || failing || pausing {
 		current, err := s.Store.Get(projectID, name)
 		if err != nil {
 			return Worker{}, err
 		}
-		if failing {
+		switch {
+		case failing:
 			return current, fmt.Errorf("%w: %s is being torn down", ErrTransition, name)
+		case pausing:
+			return current, fmt.Errorf("%w: %s is being paused", ErrTransition, name)
 		}
 		return current, fmt.Errorf("%w: %s is already being stopped", ErrTransition, name)
 	}
@@ -715,6 +740,14 @@ func (s *Supervisor) Stop(projectID, name string) (Worker, error) {
 	}
 	s.mu.Lock()
 	live := s.live[key]
+	var held chan struct{}
+	if paused := s.paused[key]; live == nil && paused != nil {
+		// The group of a paused worker is gone: its native session is
+		// released and its watcher released from the wait for a resume.
+		live = paused
+		delete(s.paused, key)
+		held, live.replacing = live.replacing, nil
+	}
 	ending := s.ending[key] != nil || s.failing[key]
 	if live != nil {
 		live.stopping = true
@@ -722,6 +755,9 @@ func (s *Supervisor) Stop(projectID, name string) (Worker, error) {
 		s.ending[key] = live
 	}
 	s.mu.Unlock()
+	if held != nil {
+		close(held)
+	}
 	if live == nil && ending {
 		return current, fmt.Errorf("%w: %s is being torn down", ErrTransition, name)
 	}
@@ -742,9 +778,11 @@ func (s *Supervisor) Stop(projectID, name string) (Worker, error) {
 	})
 }
 
-// Close refuses new starts, abandons the starts in progress and stops
-// every live worker of this supervisor. A live session that Stop leaves
-// behind is torn down anyway, and its worker moved to FAILED; the
+// Close refuses new starts, abandons the starts in progress, waits for
+// the pauses and resumes in progress and stops every live worker of this
+// supervisor. A live session that Stop leaves behind is torn down anyway,
+// and its worker moved to FAILED. A PAUSED worker stays PAUSED, its kept
+// native session released with its slot: it has no group to stop. The
 // termination of every group a previous teardown failed on is retried.
 // Close then waits for the groups it watches to be gone, at most
 // CloseTimeout when a group could not be terminated.
@@ -783,6 +821,21 @@ func (s *Supervisor) Close() {
 		}
 		s.fail(key.project, key.name, reason)
 		s.recorded(key)
+	}
+	s.mu.Lock()
+	var held []chan struct{}
+	for key, live := range s.paused {
+		delete(s.paused, key)
+		live.stopping = true
+		s.ending[key] = live
+		if live.replacing != nil {
+			held = append(held, live.replacing)
+			live.replacing = nil
+		}
+	}
+	s.mu.Unlock()
+	for _, waiting := range held {
+		close(waiting)
 	}
 	s.mu.Lock()
 	pending := map[liveKey]*running{}

@@ -44,11 +44,16 @@ type job struct {
 	// exceeded is the time budget the step exceeded when its interval
 	// was stopped.
 	exceeded error
+	// held reports that the job admits its turn or settles its end: no
+	// pause takes the turn until letGo, which calls unhold.
+	held   bool
+	unhold func()
 }
 
 // run drives one worker turn on the task, from its admission to the
 // task's transition.
 func (j *job) run(ctx context.Context) error {
+	defer j.letGo()
 	u, admitted, err := j.admit("")
 	if err != nil || !admitted {
 		return err
@@ -85,8 +90,11 @@ func (j *job) run(ctx context.Context) error {
 // or the retry of a previous one: the turn is stored, one turn of the
 // task's budget is reserved for it, and the worker takes the
 // assignment. A reservation over budget blocks the task. It reports
-// whether the turn can go ahead.
+// whether the turn can go ahead. The worker is marked first, a pause in
+// progress being waited for: no pause takes the turn before exchange
+// has sent its prompt.
 func (j *job) admit(previous string) (turn.Turn, bool, error) {
+	j.mark()
 	var u turn.Turn
 	var err error
 	if previous == "" {
@@ -243,7 +251,8 @@ func refused(err error) error {
 
 // exchange sends a prompt in an admitted turn and follows the turn
 // until the session detects its end or an input request, or the turn's
-// bound passes. A completed turn has its rights revoked before it is
+// bound passes. The mark admit set ends once the prompt is sent: a
+// pause can then take the running turn. A completed turn has its rights revoked before it is
 // returned VALIDATING, so the agent cannot change the worktree while its
 // handoff is read; any other end is applied to the turn, the worker and
 // the task, and reported as ended.
@@ -255,8 +264,16 @@ func (j *job) exchange(ctx context.Context, u turn.Turn, prompt string) (turn.Tu
 	if err := j.session.Send(prompt); err != nil {
 		return u, true, j.fail(u, turn.Failed, "send the prompt: "+err.Error())
 	}
+	j.letGo()
 	for {
-		switch detection := j.session.Poll(); detection {
+		detection := j.session.Poll()
+		switch detection {
+		case agent.DetectCompleted, agent.DetectWaitingInput, agent.DetectFailed, agent.DetectInterrupted:
+			if taken, err := j.hold(u); err != nil || taken {
+				return u, true, err
+			}
+		}
+		switch detection {
 		case agent.DetectCompleted:
 			if err := j.session.Settle(); err != nil {
 				return u, true, j.fail(u, turn.Failed, "revoke the turn's rights: "+err.Error())
@@ -270,6 +287,9 @@ func (j *job) exchange(ctx context.Context, u turn.Turn, prompt string) (turn.Tu
 		case agent.DetectInterrupted:
 			return u, true, j.fail(u, turn.Interrupted, "the agent's turn was interrupted")
 		}
+		if taken, err := j.hold(u); err != nil || taken {
+			return u, true, err
+		}
 		expired, found, err := j.e.turns().Expire(u.ID)
 		if err != nil {
 			return u, true, err
@@ -277,6 +297,7 @@ func (j *job) exchange(ctx context.Context, u turn.Turn, prompt string) (turn.Tu
 		if found {
 			return expired, true, j.fail(expired, turn.Failed, expired.Reason)
 		}
+		j.letGo()
 		if err := j.e.wait(ctx); err != nil {
 			return u, true, err
 		}
@@ -303,8 +324,12 @@ func (j *job) waitInput(u turn.Turn) error {
 }
 
 // fail ends a turn on an error: the turn ends in the given state, the
-// worker fails, its session is closed and the task is blocked.
+// worker fails, its session is closed and the task is blocked. A turn a
+// pause took is left to it.
 func (j *job) fail(u turn.Turn, end turn.State, cause string) error {
+	if taken, err := j.hold(u); err != nil || taken {
+		return err
+	}
 	reason := fmt.Sprintf("turn %s of worker %s: %s", u.ID, j.worker.Name, cause)
 	var errs []error
 	if !u.State.Terminal() {
@@ -345,9 +370,68 @@ func (j *job) assignment(u turn.Turn) handoff.Assignment {
 		WorkerID: j.worker.Name, ConfigID: j.task.ConfigID, TaskBaseSHA: j.task.BaseSHA}
 }
 
+// hold marks the job's worker as settling the end of the turn, waiting
+// first for the end of a pause in progress on it, then reports whether
+// a pause took the turn from the job: the worker no longer holds its
+// assignment. The pause has then interrupted the turn, charged the
+// task's open active interval and blocked the task, so the job drops
+// its interval and applies nothing more. Otherwise no pause takes the
+// turn until letGo: the job settles it alone. A job already holding the
+// mark keeps it.
+func (j *job) hold(u turn.Turn) (bool, error) {
+	if j.held {
+		return false, nil
+	}
+	j.mark()
+	w, err := j.e.workers().Get(j.project.ID, j.worker.Name)
+	if err != nil {
+		j.letGo()
+		return false, err
+	}
+	if w.Assignment != nil && w.Assignment.TurnID == u.ID {
+		return false, nil
+	}
+	j.letGo()
+	j.interval = nil
+	return true, nil
+}
+
+// mark marks the job's worker as settling its turn, waiting first for
+// the end of a pause in progress on it: no pause takes the worker's
+// turn until letGo. A job already holding the mark keeps it.
+func (j *job) mark() {
+	if j.held {
+		return
+	}
+	if p, ok := j.e.Sessions.(pauses); ok {
+		for {
+			release, pausing := p.Settling(j.project.ID, j.worker.Name)
+			if pausing == nil {
+				j.unhold = release
+				break
+			}
+			<-pausing
+		}
+	}
+	j.held = true
+}
+
+// letGo ends the mark hold or admit set, if any: a pause can take the worker's
+// turn again.
+func (j *job) letGo() {
+	if j.unhold != nil {
+		j.unhold()
+	}
+	j.held, j.unhold = false, nil
+}
+
 // settle decides on the handoff of a completed turn: accepted when
 // valid, one format repair when missing or invalid, blocked otherwise.
+// A turn a pause took is left to it.
 func (j *job) settle(ctx context.Context, u turn.Turn) error {
+	if taken, err := j.hold(u); err != nil || taken {
+		return err
+	}
 	assignment := j.assignment(u)
 	verdict, err := handoff.EndTurn(j.worktree, assignment)
 	if err != nil {
@@ -441,6 +525,8 @@ func (j *job) repair(ctx context.Context, u turn.Turn, failed handoff.Assignment
 	if err := j.release(fmt.Sprintf("turn %s ended without a valid handoff", u.ID)); err != nil {
 		return errors.Join(err, j.endStep(fmt.Sprintf("turn %s: %s; the worker could not be released", u.ID, reason)))
 	}
+	// The failed turn is settled: a pause can take the repair turn.
+	j.letGo()
 	r, admitted, err := j.admit(u.ID)
 	if err != nil || !admitted {
 		return errors.Join(err, j.stopClock())
