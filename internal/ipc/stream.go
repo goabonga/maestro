@@ -19,11 +19,6 @@ import (
 // StreamProtocol names the upgrade negotiated for PTY streaming.
 const StreamProtocol = "maestro-stream/1"
 
-// SessionSource resolves a session by identifier.
-type SessionSource interface {
-	Session(id string) (*session.Session, bool)
-}
-
 // Pilots hands the live session of a worker to one human pilot at a
 // time; *worker.Supervisor is one.
 type Pilots interface {
@@ -34,31 +29,12 @@ type Pilots interface {
 	Attach(projectID, name string) (*session.Session, func(detached bool), error)
 }
 
-// streamSession upgrades the connection and pumps frames: output to
-// the client from a bounded live subscription, input and resizes from
-// the client to the terminal. A slow client is disconnected with an
-// error frame; a detach ends only the stream, never the session.
-func (s *Server) streamSession(w http.ResponseWriter, r *http.Request) {
-	if s.Sessions == nil {
-		fail(w, r, http.StatusNotFound, CodeNotFound, "this daemon exposes no sessions")
-		return
-	}
-	live, ok := s.Sessions.Session(r.PathValue("id"))
-	if !ok {
-		fail(w, r, http.StatusNotFound, CodeNotFound, "unknown session: "+r.PathValue("id"))
-		return
-	}
-	connection, buffered, ok := upgrade(w, r)
-	if !ok {
-		return
-	}
-	defer func() { _ = connection.Close() }()
-	pump(connection, buffered.Reader, live)
-}
-
 // streamWorker attaches the client as the human pilot of a worker of
-// the project named by ?project_id=, then streams the worker's session
-// as streamSession does. The worker is ATTACHED before the connection is
+// the project named by ?project_id=, then upgrades the connection and
+// pumps frames: output to the client from a bounded live subscription,
+// input and resizes from the client to the terminal. A slow client is
+// disconnected with an error frame; a detach ends only the stream, never
+// the session. The worker is ATTACHED before the connection is
 // upgraded, so a refused attach answers with the error envelope; once
 // the stream ends, the worker is handed back on a detach frame, or on a
 // lost connection for any other end.
