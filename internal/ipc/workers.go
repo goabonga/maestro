@@ -78,6 +78,7 @@ func (s *Server) workerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/workers", idempotent(s.DB, s.startWorkers))
 	mux.HandleFunc("GET /v1/workers/{name}", s.showWorker)
 	mux.HandleFunc("POST /v1/workers/{name}/stop", idempotent(s.DB, s.stopWorker))
+	mux.HandleFunc("GET /v1/workers/{name}/stream", s.streamWorker)
 }
 
 // workerProject resolves the project a worker request names, writing

@@ -43,13 +43,6 @@ func (l *lockedBuffer) String() string {
 	return l.buf.String()
 }
 
-// oneSession resolves a single session under the id "s1".
-type oneSession struct{ live *session.Session }
-
-func (o oneSession) Session(id string) (*session.Session, bool) {
-	return o.live, id == "s1"
-}
-
 // shortSocket returns a socket path short enough for sockaddr_un.
 func shortSocket(t *testing.T) string {
 	t.Helper()
@@ -61,9 +54,20 @@ func shortSocket(t *testing.T) string {
 	return filepath.Join(dir, "svc.sock")
 }
 
-// attachFixture starts a confined session served on a Unix socket and
-// a PTY pair standing in for the user's terminal.
-func attachFixture(t *testing.T, argv ...string) (string, *session.Session, *os.File, *os.File) {
+// attachFixture serves a confined session as the live session of the
+// worker "claude-01" and opens a PTY pair standing in for the user's
+// terminal; it returns the socket, the project's id, the session and the
+// pair.
+func attachFixture(t *testing.T, argv ...string) (string, string, *session.Session, *os.File, *os.File) {
+	t.Helper()
+	socket, project, p := workerFixture(t, argv...)
+	keyboard, terminal := terminalPair(t)
+	return socket, project, p.live, keyboard, terminal
+}
+
+// confinedSession starts a confined session running argv, skipping the
+// hosts that cannot confine.
+func confinedSession(t *testing.T, argv ...string) *session.Session {
 	t.Helper()
 	probed, err := launcher.New()
 	if errors.Is(err, launcher.ErrUnsupported) {
@@ -77,22 +81,32 @@ func attachFixture(t *testing.T, argv ...string) (string, *session.Session, *os.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = live.Stop(200 * time.Millisecond) })
+	return live
+}
 
+// serve serves the daemon's routes on a Unix socket and returns it.
+func serve(t *testing.T, server *ipc.Server) string {
+	t.Helper()
 	socket := shortSocket(t)
 	listener, err := transport.Listen(socket)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	server := &ipc.Server{Service: "maestro-svc", Version: "0.0.0", Sessions: oneSession{live}}
 	go func() { _ = http.Serve(listener, server.Handler()) }()
+	return socket
+}
 
+// terminalPair opens a PTY pair: the keyboard side types, the terminal
+// side stands in for the user's terminal.
+func terminalPair(t *testing.T) (*os.File, *os.File) {
+	t.Helper()
 	keyboard, terminal, err := pty.Open()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = keyboard.Close(); _ = terminal.Close() })
-	return socket, live, keyboard, terminal
+	return keyboard, terminal
 }
 
 // modes captures the termios flags that raw mode changes.
@@ -118,13 +132,13 @@ func eventually(t *testing.T, output *lockedBuffer, want string) {
 	t.Fatalf("output never contained %q: %q", want, output.String())
 }
 
-func TestRunRelaysAndDetachesOnCtrlBracket(t *testing.T) {
-	socket, live, keyboard, terminal := attachFixture(t, "/bin/sh")
+func TestWorkerRelaysAndDetachesOnCtrlBracket(t *testing.T) {
+	socket, project, live, keyboard, terminal := attachFixture(t, "/bin/sh")
 	before := modes(t, terminal)
 	output := &lockedBuffer{}
 	finished := make(chan error, 1)
 	go func() {
-		finished <- Run(context.Background(), socket, "s1", Terminal{In: terminal, Out: output})
+		finished <- Worker(context.Background(), socket, project, "claude-01", Terminal{In: terminal, Out: output})
 	}()
 
 	// Raw mode is on while attached.
@@ -160,8 +174,8 @@ func TestRunRelaysAndDetachesOnCtrlBracket(t *testing.T) {
 	}
 }
 
-func TestRunPropagatesResizes(t *testing.T) {
-	socket, _, keyboard, terminal := attachFixture(t, "/bin/sh")
+func TestWorkerPropagatesResizes(t *testing.T) {
+	socket, project, _, keyboard, terminal := attachFixture(t, "/bin/sh")
 	if err := pty.Setsize(terminal, &pty.Winsize{Rows: 33, Cols: 77}); err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +183,7 @@ func TestRunPropagatesResizes(t *testing.T) {
 	winch := make(chan os.Signal, 1)
 	finished := make(chan error, 1)
 	go func() {
-		finished <- Run(context.Background(), socket, "s1", Terminal{In: terminal, Out: output, Winch: winch})
+		finished <- Worker(context.Background(), socket, project, "claude-01", Terminal{In: terminal, Out: output, Winch: winch})
 	}()
 
 	if _, err := keyboard.Write([]byte("stty size\r")); err != nil {
@@ -195,15 +209,15 @@ func TestRunPropagatesResizes(t *testing.T) {
 	}
 }
 
-func TestRunRestoresTheTerminalWhenTheSessionEnds(t *testing.T) {
+func TestWorkerRestoresTheTerminalWhenTheSessionEnds(t *testing.T) {
 	// The session prints only after a line typed through the attach, so
 	// its output cannot be emitted before the attach subscribed to it.
-	socket, _, keyboard, terminal := attachFixture(t, "/bin/sh", "-c", "read line; echo goodbye-$line; exit 3")
+	socket, project, _, keyboard, terminal := attachFixture(t, "/bin/sh", "-c", "read line; echo goodbye-$line; exit 3")
 	before := modes(t, terminal)
 	output := &lockedBuffer{}
 	finished := make(chan error, 1)
 	go func() {
-		finished <- Run(context.Background(), socket, "s1", Terminal{In: terminal, Out: output})
+		finished <- Worker(context.Background(), socket, project, "claude-01", Terminal{In: terminal, Out: output})
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && modes(t, terminal) == before {
@@ -229,11 +243,11 @@ func TestRunRestoresTheTerminalWhenTheSessionEnds(t *testing.T) {
 	}
 }
 
-func TestRunRefusesAnUnknownSessionWithoutTouchingTheTerminal(t *testing.T) {
-	socket, _, _, terminal := attachFixture(t, "/bin/cat")
+func TestWorkerRefusesAnUnknownWorkerWithoutTouchingTheTerminal(t *testing.T) {
+	socket, project, _, _, terminal := attachFixture(t, "/bin/cat")
 	before := modes(t, terminal)
-	err := Run(context.Background(), socket, "missing", Terminal{In: terminal, Out: &lockedBuffer{}})
-	if err == nil || !strings.Contains(err.Error(), "unknown session") {
+	err := Worker(context.Background(), socket, project, "missing", Terminal{In: terminal, Out: &lockedBuffer{}})
+	if err == nil || !strings.Contains(err.Error(), "unknown worker") {
 		t.Fatalf("error %v", err)
 	}
 	if modes(t, terminal) != before {
@@ -257,12 +271,12 @@ func TestResizesDeliversWindowChangesUntilStopped(t *testing.T) {
 	}
 }
 
-func TestRunStopsReadingTheTerminalWhenItReturns(t *testing.T) {
-	socket, _, keyboard, terminal := attachFixture(t, "/bin/sh", "-c", "read line; exit 0")
+func TestWorkerStopsReadingTheTerminalWhenItReturns(t *testing.T) {
+	socket, project, _, keyboard, terminal := attachFixture(t, "/bin/sh", "-c", "read line; exit 0")
 	before := modes(t, terminal)
 	finished := make(chan error, 1)
 	go func() {
-		finished <- Run(context.Background(), socket, "s1", Terminal{In: terminal, Out: &lockedBuffer{}})
+		finished <- Worker(context.Background(), socket, project, "claude-01", Terminal{In: terminal, Out: &lockedBuffer{}})
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && modes(t, terminal) == before {

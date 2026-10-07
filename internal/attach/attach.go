@@ -1,23 +1,24 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Chris <goabonga@pm.me>
 
-// Package attach is the client side of a session's stream: it puts the
-// user's terminal in raw mode, relays input, output and resizes to a
-// session served by the daemon, and leaves on Ctrl-].
+// Package attach is the client side of a worker's session stream: it
+// puts the user's terminal in raw mode, relays input, output and resizes
+// to the live session of the worker it pilots, and leaves on Ctrl-].
 package attach
 
 import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -46,12 +47,22 @@ func Resizes() (<-chan os.Signal, func()) {
 	return winch, func() { signal.Stop(winch) }
 }
 
-// Run connects to a session's stream on the daemon's socket, puts the
-// terminal in raw mode, relays input, output and resizes, and leaves on
-// Ctrl-]. The terminal is restored by a deferred call on every path,
-// errors included.
-func Run(ctx context.Context, socket, session string, term Terminal) (err error) {
-	connection, reader, err := openStream(ctx, socket, session)
+// Worker attaches the terminal as the human pilot of a worker of a
+// project: the daemon moves the worker to ATTACHED before the stream
+// opens, and hands it back on Ctrl-] or when the connection ends. It
+// puts the terminal in raw mode, relays input, output and resizes, and
+// restores the terminal by a deferred call on every path, errors
+// included. A refused attach, such as a worker whose turn is running,
+// returns the daemon's reason without touching the terminal.
+func Worker(ctx context.Context, socket, projectID, name string, term Terminal) error {
+	path := "/v1/workers/" + url.PathEscape(name) + "/stream?project_id=" + url.QueryEscape(projectID)
+	return run(ctx, socket, path, "worker "+name, term)
+}
+
+// run attaches the terminal to the stream at path; label names the
+// stream's end in the errors.
+func run(ctx context.Context, socket, path, label string, term Terminal) (err error) {
+	connection, reader, err := openStream(ctx, socket, path)
 	if err != nil {
 		return err
 	}
@@ -126,7 +137,7 @@ func Run(ctx context.Context, socket, session string, term Terminal) (err error)
 				return nil
 			default:
 			}
-			return fmt.Errorf("session %s: %s", session, payload)
+			return fmt.Errorf("%s: %s", label, payload)
 		}
 	}
 }
@@ -161,43 +172,39 @@ func relayInput(in *os.File, connection net.Conn, detached chan<- struct{}, done
 	}
 }
 
-// openStream dials the daemon and upgrades to the session's stream.
-func openStream(ctx context.Context, socket, session string) (net.Conn, *bufio.Reader, error) {
+// openStream dials the daemon and upgrades to the stream at path. A
+// refusal returns the message of the daemon's error envelope.
+func openStream(ctx context.Context, socket, path string) (net.Conn, *bufio.Reader, error) {
 	var dialer net.Dialer
 	connection, err := dialer.DialContext(ctx, "unix", socket)
 	if err != nil {
 		return nil, nil, fmt.Errorf("daemon not reachable at %s: %w", socket, err)
 	}
 	_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
-	request := "GET /v1/sessions/" + url.PathEscape(session) + "/stream HTTP/1.1\r\nHost: maestro\r\n" +
+	request := "GET " + path + " HTTP/1.1\r\nHost: maestro\r\n" +
 		"Upgrade: " + ipc.StreamProtocol + "\r\nConnection: Upgrade\r\n\r\n"
 	if _, err := connection.Write([]byte(request)); err != nil {
 		_ = connection.Close()
 		return nil, nil, err
 	}
 	reader := bufio.NewReader(connection)
-	status, err := reader.ReadString('\n')
+	response, err := http.ReadResponse(reader, nil)
 	if err != nil {
 		_ = connection.Close()
 		return nil, nil, err
 	}
-	if !strings.Contains(status, " 101 ") {
-		_ = connection.Close()
-		if strings.Contains(status, " 404 ") {
-			return nil, nil, fmt.Errorf("unknown session: %s", session)
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		defer func() { _ = connection.Close() }()
+		var envelope ipc.Envelope
+		if json.NewDecoder(io.LimitReader(response.Body, maxRefusal)).Decode(&envelope) == nil &&
+			envelope.Error != nil && envelope.Error.Message != "" {
+			return nil, nil, errors.New(envelope.Error.Message)
 		}
-		return nil, nil, fmt.Errorf("the daemon refused the stream: %s", strings.TrimSpace(status))
-	}
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			_ = connection.Close()
-			return nil, nil, err
-		}
-		if line == "\r\n" {
-			break
-		}
+		return nil, nil, fmt.Errorf("the daemon refused the stream: %s", response.Status)
 	}
 	_ = connection.SetDeadline(time.Time{})
 	return connection, reader, nil
 }
+
+// maxRefusal bounds the error envelope read from a refused stream.
+const maxRefusal = 64 << 10

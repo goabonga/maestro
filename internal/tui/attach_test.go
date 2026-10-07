@@ -7,16 +7,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
-	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
 	"golang.org/x/sys/unix"
 
@@ -24,68 +22,57 @@ import (
 	"github.com/goabonga/maestro/internal/ipc"
 	"github.com/goabonga/maestro/internal/launcher"
 	"github.com/goabonga/maestro/internal/session"
-	"github.com/goabonga/maestro/internal/transport"
-	"github.com/goabonga/maestro/internal/worktree"
+	"github.com/goabonga/maestro/internal/worker"
 )
 
-func TestAttachPromptEditsAndCancels(t *testing.T) {
-	socket, _ := daemon(t)
+func TestAttachKeyWaitsForAWorker(t *testing.T) {
+	server, socket, project := daemonWith(t, func(*ipc.Server) {})
+	taskID := createTask(t, socket, project.ID, "add a verbose flag")
 	m := start(t, Options{Socket: socket})
-	contains(t, m.View(), "a attach")
-
-	m = send(t, m, key("a"))
-	contains(t, m.View(), "attach to session: ", "enter attach · esc cancel")
-	// Keys go to the prompt: q types, it does not quit.
-	for _, k := range []tea.KeyMsg{key("q"), key("x"), {Type: tea.KeyRunes, Runes: []rune(" \x1b")}} {
-		next, cmd := m.Update(k)
-		if cmd != nil {
-			t.Fatalf("%q ran a command in the prompt", k.String())
+	if strings.Contains(m.View(), "a attach") {
+		t.Fatalf("the dashboard offers an attach:\n%s", m.View())
+	}
+	// Screens without a worker ignore the key.
+	for _, screen := range []string{"dashboard", "tasks"} {
+		if _, cmd := m.Update(key("a")); cmd != nil {
+			t.Fatalf("a on the %s ran a command", screen)
 		}
-		m = next.(Model)
+		m = send(t, m, key("enter"))
 	}
-	contains(t, m.View(), "attach to session: qx▏")
-	m = send(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
-	contains(t, m.View(), "attach to session: q▏")
+	contains(t, m.View(), "maestro · task "+taskID, "a attach")
+	m = send(t, m, key("a"))
+	contains(t, m.View(), "no worker drives this task")
 
+	// Once a worker drives the task, a attaches it.
+	registerWorker(t, server, project, "claude-01")
+	assignWorker(t, server, project, "claude-01", taskID, "implement the flag")
+	m = send(t, m, key("r"))
+	if _, cmd := m.Update(key("a")); cmd == nil {
+		t.Fatal("a on a driven task attached nothing")
+	}
 	m = send(t, m, key("esc"))
-	if strings.Contains(m.View(), "attach to session") {
-		t.Fatalf("esc left the prompt open:\n%s", m.View())
-	}
-	contains(t, m.View(), "maestro · dashboard")
-}
-
-func TestAttachPromptIgnoresAnEmptyIDAndQuitsOnCtrlC(t *testing.T) {
-	m := New(Options{Socket: "unused"})
-	m = send(t, m, key("a"))
-	next, cmd := m.Update(key("enter"))
-	if cmd != nil || next.(Model).prompting {
-		t.Fatal("an empty session id started an attach")
-	}
-	m = send(t, m, key("a"))
-	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if cmd == nil {
-		t.Fatal("ctrl+c does not quit from the prompt")
-	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Fatal("ctrl+c does not quit from the prompt")
+	m = send(t, m, key("w"))
+	contains(t, m.View(), "> claude-01", "a attach")
+	if _, cmd := m.Update(key("a")); cmd == nil {
+		t.Fatal("a on the workers screen attached nothing")
 	}
 }
 
 func TestAttachedMessageShowsTheOutcomeAndRefreshes(t *testing.T) {
 	socket, _ := daemon(t)
 	m := start(t, Options{Socket: socket})
-	m = send(t, m, attachedMsg{session: "s1"})
-	contains(t, m.View(), "detached from s1", "daemon: maestro-svc")
+	m = send(t, m, attachedMsg{worker: "claude-01"})
+	contains(t, m.View(), "detached from claude-01", "daemon: maestro-svc")
 
-	m = send(t, m, attachedMsg{session: "s2", err: errors.New("session s2: \x1b[2Jexited")})
-	contains(t, m.View(), "session s2: ?[2Jexited")
+	m = send(t, m, attachedMsg{worker: "claude-02", err: errors.New("worker claude-02: \x1b[2Jexited")})
+	contains(t, m.View(), "worker claude-02: ?[2Jexited")
 	if strings.Contains(m.View(), "detached from") {
 		t.Fatalf("the previous outcome is still shown:\n%s", m.View())
 	}
 }
 
 func TestAttachNeedsATerminal(t *testing.T) {
-	exec := &attachExec{socket: "unused", session: "s1"}
+	exec := &attachExec{socket: "unused", project: "p1", worker: "claude-01"}
 	exec.SetStdin(strings.NewReader(""))
 	exec.SetStdout(io.Discard)
 	exec.SetStderr(io.Discard)
@@ -94,11 +81,28 @@ func TestAttachNeedsATerminal(t *testing.T) {
 	}
 }
 
-// oneSession resolves a single session under the id "s1".
-type oneSession struct{ live *session.Session }
+// pilots attaches every worker to one fixture session, or refuses with
+// refusal when it is set.
+type pilots struct {
+	mu      sync.Mutex
+	live    *session.Session
+	refusal error
+}
 
-func (o oneSession) Session(id string) (*session.Session, bool) {
-	return o.live, id == "s1"
+func (p *pilots) Attach(_, _ string) (*session.Session, func(bool), error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.refusal != nil {
+		return nil, nil, p.refusal
+	}
+	return p.live, func(bool) {}, nil
+}
+
+// refuse makes the next attaches fail with err.
+func (p *pilots) refuse(err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.refusal = err
 }
 
 // display records what the program draws on the terminal.
@@ -150,9 +154,11 @@ func termModes(t *testing.T, terminal *os.File) [3]uint32 {
 	return [3]uint32{settings.Iflag, settings.Oflag, settings.Lflag}
 }
 
-// sessionDaemon serves a confined shell session "s1" on a Unix socket
-// and returns a PTY pair standing in for the user's terminal.
-func sessionDaemon(t *testing.T) (string, *os.File, *os.File) {
+// sessionDaemon serves a confined shell session as the live session of
+// the worker "claude-01" of a registered project, and returns the
+// socket, the project, the pilots and a PTY pair standing in for the
+// user's terminal.
+func sessionDaemon(t *testing.T) (string, string, *pilots, *os.File, *os.File) {
 	t.Helper()
 	probed, err := launcher.New()
 	if errors.Is(err, launcher.ErrUnsupported) {
@@ -166,22 +172,9 @@ func sessionDaemon(t *testing.T) (string, *os.File, *os.File) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = live.Stop(200 * time.Millisecond) })
-
-	dir, err := os.MkdirTemp("", "maestro")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	socket := filepath.Join(dir, "svc.sock")
-	listener, err := transport.Listen(socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &ipc.Server{Service: "maestro-svc", Version: "0.0.0",
-		Store: worktree.Store{Base: t.TempDir()}, Sessions: oneSession{live}}
-	web := &http.Server{Handler: server.Handler()}
-	go func() { _ = web.Serve(listener) }()
-	t.Cleanup(func() { _ = web.Close() })
+	p := &pilots{live: live}
+	server, socket, project := daemonWith(t, func(server *ipc.Server) { server.Pilots = p })
+	registerWorker(t, server, project, "claude-01")
 
 	keyboard, terminal, err := pty.Open()
 	if err != nil {
@@ -191,7 +184,7 @@ func sessionDaemon(t *testing.T) (string, *os.File, *os.File) {
 	if err := pty.Setsize(terminal, &pty.Winsize{Rows: 40, Cols: 160}); err != nil {
 		t.Fatal(err)
 	}
-	return socket, keyboard, terminal
+	return socket, project.ID, p, keyboard, terminal
 }
 
 // typeKeys writes keystrokes on the terminal.
@@ -206,43 +199,39 @@ func typeKeys(t *testing.T, keyboard *os.File, keys string) {
 // hand the terminal over.
 const suspended = "\x1b[?1049l"
 
-func TestRunAttachesToASessionAndResumes(t *testing.T) {
-	socket, keyboard, terminal := sessionDaemon(t)
+func TestRunAttachesTheSelectedWorkerAndResumes(t *testing.T) {
+	socket, project, p, keyboard, terminal := sessionDaemon(t)
 	before := termModes(t, terminal)
 	drawn := &display{}
 	go func() { _, _ = io.Copy(drawn, keyboard) }()
 	done := make(chan error, 1)
-	go func() { done <- Run(context.Background(), Options{Socket: socket}, terminal, terminal) }()
-	drawn.await(t, 0, "maestro · dashboard")
-	drawn.await(t, 0, "a attach")
+	go func() {
+		done <- Run(context.Background(), Options{Socket: socket, Project: project}, terminal, terminal)
+	}()
+	drawn.await(t, 0, "maestro · tasks of "+project)
+	typeKeys(t, keyboard, "w")
+	drawn.await(t, 0, "> claude-01")
 
 	// Attach, run a command in the session, detach with Ctrl-].
 	mark := drawn.mark()
 	typeKeys(t, keyboard, "a")
-	drawn.await(t, mark, "attach to session:")
-	mark = drawn.mark()
-	typeKeys(t, keyboard, "s1\r")
 	drawn.await(t, mark, suspended)
 	typeKeys(t, keyboard, "echo attached-$((40+2))\r")
 	drawn.await(t, mark, "attached-42")
 	mark = drawn.mark()
 	typeKeys(t, keyboard, string([]byte{attach.DetachKey}))
-	drawn.await(t, mark, "detached from s1")
+	drawn.await(t, mark, "detached from claude-01")
 
-	// A refused attach resumes the dashboard with the error.
+	// A refused attach resumes the dashboard with the daemon's reason.
+	p.refuse(fmt.Errorf("attach in BUSY: %w: the turn is neither quiescent nor interrupted", worker.ErrGuard))
 	mark = drawn.mark()
 	typeKeys(t, keyboard, "a")
-	drawn.await(t, mark, "attach to session:")
-	mark = drawn.mark()
-	typeKeys(t, keyboard, "missing\r")
-	drawn.await(t, mark, "unknown session: missing")
+	drawn.await(t, mark, "the turn is neither quiescent nor interrupted")
 
 	// A session ending during the attach resumes it too.
+	p.refuse(nil)
 	mark = drawn.mark()
 	typeKeys(t, keyboard, "a")
-	drawn.await(t, mark, "attach to session:")
-	mark = drawn.mark()
-	typeKeys(t, keyboard, "s1\r")
 	drawn.await(t, mark, suspended)
 	typeKeys(t, keyboard, "exit 3\r")
 	drawn.await(t, mark, "exited")

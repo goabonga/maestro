@@ -43,6 +43,10 @@ modified behind your back.
   it and terminates its session. Each worker is shown with its agent,
   driver, state, current assignment and recent events.
   [Command reference](docs/cli.md#workers)
+- **Lets you pilot a worker** (`maestro attach <worker>`): your terminal
+  drives the worker's agent session while Maestro sends it no turn, one
+  pilot at a time and never during a running turn; `Ctrl-]` hands the
+  worker back. [Command reference](docs/cli.md#workers)
 - **Drives tasks on the started workers**: each task goes through
   planning, implementation, the project's tests, review and corrections,
   one agent turn at a time, until it is ready to integrate or blocked
@@ -51,8 +55,8 @@ modified behind your back.
 - **Shows a live dashboard** (`maestro tui`) of the daemon's status and
   capacity, the projects, their tasks with their history and the worker
   driving each one, and their workers with their state and recent
-  events; its command bar starts and stops workers.
-  [Terminal dashboard](docs/tui.md)
+  events; its command bar starts and stops workers, and `a` attaches
+  the terminal to the selected worker. [Terminal dashboard](docs/tui.md)
 - **Syncs from your repository** (`maestro sync --from <branch>`): it
   imports the commit your branch points to, runs the project's configured
   tests on it, and advances the project's private integration branch only

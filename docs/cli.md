@@ -53,6 +53,7 @@ Commands that reach the daemon accept `--socket <path>`.
 | `maestro worker show <name>` | Shows a worker, its current assignment and its recent events. |
 | `maestro worker start <agent> [--count <n>]` | Starts `n` workers (default 1) of an agent in confined sessions, bounded by the daemon's session ceiling, and waits until each one is `IDLE` or `FAILED`. [Starting and stopping](development/workers.md#starting-and-stopping) |
 | `maestro worker stop <name>` | Drains a worker and terminates its session; it ends `STOPPED`. |
+| `maestro attach <worker>` | Pilots a worker's session from the terminal: the worker is `ATTACHED` and gets no turn meanwhile. Only an `IDLE` or `WAITING_INPUT` worker can be attached, one pilot at a time; `Ctrl-]` detaches and hands the worker back. |
 
 ## Your repository
 
@@ -68,7 +69,6 @@ Commands that reach the daemon accept `--socket <path>`.
 | `maestro tui [--project <id>] [--interval <duration>]` | Opens the live dashboard. [Terminal dashboard](tui.md) |
 | `maestro worktree list [--path <repository>]` | Lists the task worktrees of a project. [Inspecting worktrees](worktrees.md) |
 | `maestro diff <worker> [task] [--path <repository>]` | Shows the pending changes of a worker's task worktree. |
-| `maestro attach <session>` | Attaches the terminal to a session; `Ctrl-]` detaches. |
 | `maestro agent doctor` | Checks the sandbox and the installed agent versions. [Checking agents](agents.md) |
 
 ## Data

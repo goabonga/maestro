@@ -118,6 +118,8 @@ func run(ctx context.Context, args []string, output io.Writer) error {
 	}
 	// Workers start in confined sessions bounded by the session ceiling.
 	server.Supervisor = &worker.Supervisor{Store: worker.Store{DB: db}, Projects: store, Capacity: capacity}
+	// A human pilot attaches to the live sessions the supervisor holds.
+	server.Pilots = server.Supervisor
 	// A sync runs its tests confined; a host that cannot confine has no
 	// test runner, and every sync is refused rather than left untested.
 	// Without confinement, every worker start is refused as well.

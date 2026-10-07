@@ -30,8 +30,9 @@ type Server struct {
 	// Capacity exposes the global ceilings; nil hides them in status.
 	Capacity *scheduler.Capacity
 
-	// Sessions resolves streamable sessions; nil disables streaming.
-	Sessions SessionSource
+	// Pilots attaches a human pilot to the workers' live sessions; nil
+	// disables the worker stream route.
+	Pilots Pilots
 
 	// Tasks stores the tasks of the projects; nil disables the task
 	// routes.
@@ -76,7 +77,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects", idempotent(s.DB, s.registerProject))
 	mux.HandleFunc("POST /v1/daemon/stop", s.stopDaemon)
 	mux.HandleFunc("GET /v1/status", s.status)
-	mux.HandleFunc("GET /v1/sessions/{id}/stream", s.streamSession)
 	s.taskRoutes(mux)
 	s.syncRoutes(mux)
 	s.publishRoutes(mux)

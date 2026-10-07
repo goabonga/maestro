@@ -164,25 +164,26 @@ queue overflows is disconnected rather than allowed to block the read.
 Subscribers learn that a session ended only once its exit is
 reconciled.
 
-Clients stream a session over a dedicated connection, never mixed with
-RPC responses: `GET /v1/sessions/{id}/stream` with
-`Upgrade: maestro-stream/1` switches the connection to typed frames —
-a one-byte type (`o` output, `i` input, `r` resize, `d` detach,
-`e` error), a big-endian 32-bit length and a payload bounded to
-64 KiB; unknown types and oversized lengths are refused. Every frame
-write has a deadline: a client that stops reading is hung up on, and
-the session keeps running. A detach frame ends the stream only; the
-session survives it.
+Clients stream the session of a worker over a dedicated connection,
+never mixed with RPC responses:
+`GET /v1/workers/{name}/stream?project_id=` with
+`Upgrade: maestro-stream/1` attaches the client as the worker's pilot
+([Attach](workers.md#attach)) and switches the connection to typed
+frames — a one-byte type (`o` output, `i` input, `r` resize,
+`d` detach, `e` error), a big-endian 32-bit length and a payload
+bounded to 64 KiB; unknown types and oversized lengths are refused.
+Every frame write has a deadline: a client that stops reading is hung
+up on, and the session keeps running. A detach frame ends the stream
+only; the session survives it.
 
-`maestro attach <session>` is the client side of that stream. It
+`maestro attach <worker>` is the client side of that stream. It
 upgrades the connection first and only then switches the user's
 terminal to raw mode, so a refused attach never touches the terminal.
 It relays keystrokes as input frames and output frames to the screen,
 sends the terminal size on attach and again on every `SIGWINCH`, and
 leaves on `Ctrl-]` with a detach frame. The previous terminal settings
 are restored by a deferred call on every exit path — detach, session
-end, connection error. The daemon does not create sessions yet; the
-command is exercised against fixture sessions in the tests.
+end, connection error.
 
 ## Permissions epochs
 

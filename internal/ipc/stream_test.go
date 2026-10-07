@@ -19,14 +19,6 @@ import (
 	"github.com/goabonga/maestro/internal/transport"
 )
 
-// fixedSessions resolves one session under one id.
-type fixedSessions map[string]*session.Session
-
-func (f fixedSessions) Session(id string) (*session.Session, bool) {
-	live, ok := f[id]
-	return live, ok
-}
-
 // confined returns a launcher or skips when the host cannot confine.
 func confined(t *testing.T) *launcher.Launcher {
 	t.Helper()
@@ -40,9 +32,19 @@ func confined(t *testing.T) *launcher.Launcher {
 	return probed
 }
 
-// streamServer serves one live session on a Unix socket and returns an
-// upgraded raw connection to its stream.
+// streamServer serves one live session as the session of the worker
+// "claude-01" on a Unix socket and returns an upgraded raw connection to
+// its stream.
 func streamServer(t *testing.T, live *session.Session) net.Conn {
+	t.Helper()
+	server, _, project := workerServer(t)
+	server.Pilots = &fakePilots{live: live, attached: make(chan string, 1), ended: make(chan bool, 1)}
+	return upgradeStream(t, server.Handler(), "/v1/workers/claude-01/stream?project_id="+project.ID)
+}
+
+// upgradeStream serves a handler on a Unix socket and returns a raw
+// connection upgraded to the stream at path.
+func upgradeStream(t *testing.T, handler http.Handler, path string) net.Conn {
 	t.Helper()
 	socket := filepath.Join(t.TempDir(), "svc.sock")
 	listener, err := transport.Listen(socket)
@@ -50,15 +52,14 @@ func streamServer(t *testing.T, live *session.Session) net.Conn {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-	server := &Server{Service: "maestro-svc", Version: "0.0.0", Sessions: fixedSessions{"s1": live}}
-	go func() { _ = http.Serve(listener, server.Handler()) }()
+	go func() { _ = http.Serve(listener, handler) }()
 
 	connection, err := net.DialTimeout("unix", socket, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = connection.Close() })
-	request := "GET /v1/sessions/s1/stream HTTP/1.1\r\nHost: maestro\r\n" +
+	request := "GET " + path + " HTTP/1.1\r\nHost: maestro\r\n" +
 		"Upgrade: " + StreamProtocol + "\r\nConnection: Upgrade\r\n\r\n"
 	if _, err := connection.Write([]byte(request)); err != nil {
 		t.Fatal(err)
@@ -187,14 +188,6 @@ func TestStreamReportsASessionEnd(t *testing.T) {
 	}
 	if !strings.Contains(sawError, "exited") {
 		t.Fatalf("no end-of-session diagnostic, got %q", sawError)
-	}
-}
-
-func TestStreamRejectsUnknownSessionsAndMissingUpgrade(t *testing.T) {
-	_, web := newServer(t)
-	status, envelope, _ := call(t, web, "GET", "/v1/sessions/s1/stream", nil, "")
-	if status != http.StatusNotFound || envelope.Error == nil {
-		t.Fatalf("status=%d envelope=%+v", status, envelope)
 	}
 }
 
