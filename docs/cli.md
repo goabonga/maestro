@@ -53,6 +53,8 @@ Commands that reach the daemon accept `--socket <path>`.
 | `maestro worker show <name>` | Shows a worker, its current assignment and its recent events. |
 | `maestro worker start <agent> [--count <n>]` | Starts `n` workers (default 1) of an agent in confined sessions, bounded by the daemon's session ceiling, and waits until each one is `IDLE` or `FAILED`. [Starting and stopping](development/workers.md#starting-and-stopping) |
 | `maestro worker stop <name>` | Drains a worker and terminates its session; it ends `STOPPED`. |
+| `maestro pause <worker>` | Pauses a worker: the turn it runs is interrupted and its task blocked, its agent and every process it started are stopped, and it ends `PAUSED`, keeping its session for its resume. [Pausing and resuming](development/workers.md#pausing-and-resuming) |
+| `maestro resume <worker>` | Resumes a paused worker's exact conversation, read only, and waits until it is `IDLE` or `FAILED`; a task its pause blocked waits for `maestro task resume`. |
 
 ## Your repository
 
