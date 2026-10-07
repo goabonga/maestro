@@ -71,13 +71,15 @@ func viewWorker(w worker.Worker) workerView {
 	return view
 }
 
-// workerRoutes registers the worker routes; starting and stopping
-// workers are idempotent.
+// workerRoutes registers the worker routes; starting, stopping, pausing
+// and resuming workers are idempotent.
 func (s *Server) workerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/workers", s.listWorkers)
 	mux.HandleFunc("POST /v1/workers", idempotent(s.DB, s.startWorkers))
 	mux.HandleFunc("GET /v1/workers/{name}", s.showWorker)
 	mux.HandleFunc("POST /v1/workers/{name}/stop", idempotent(s.DB, s.stopWorker))
+	mux.HandleFunc("POST /v1/workers/{name}/pause", idempotent(s.DB, s.pauseWorker))
+	mux.HandleFunc("POST /v1/workers/{name}/resume", idempotent(s.DB, s.resumeWorker))
 }
 
 // workerProject resolves the project a worker request names, writing
@@ -250,5 +252,54 @@ func (s *Server) stopWorker(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
 	default:
 		reply(w, r, http.StatusOK, viewWorker(stopped))
+	}
+}
+
+// pauseWorker pauses a worker of a project: the turn it runs is
+// interrupted and its task blocked with its continuation, its confined
+// group stopped, and it ends PAUSED, its native session kept.
+func (s *Server) pauseWorker(w http.ResponseWriter, r *http.Request) {
+	s.controlWorker(w, r, http.StatusOK, func(projectID, name string) (worker.Worker, error) {
+		return s.Supervisor.Pause(projectID, name)
+	})
+}
+
+// resumeWorker resumes a paused worker of a project: once its profile and
+// continuation are validated, it answers 202 with the STARTING worker,
+// while its native conversation is resumed in the background until it
+// is IDLE or FAILED.
+func (s *Server) resumeWorker(w http.ResponseWriter, r *http.Request) {
+	s.controlWorker(w, r, http.StatusAccepted, func(projectID, name string) (worker.Worker, error) {
+		return s.Supervisor.Resume(projectID, name)
+	})
+}
+
+// controlWorker applies a control of the supervisor to the worker the
+// path names, in the project the body names, and answers the worker
+// with the status.
+func (s *Server) controlWorker(w http.ResponseWriter, r *http.Request, status int,
+	control func(projectID, name string) (worker.Worker, error)) {
+	var request transitionRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		fail(w, r, http.StatusBadRequest, CodeInvalidRequest, "body must be {\"project_id\": \"<id>\"}")
+		return
+	}
+	project, ok := s.supervisedProject(w, r, request.ProjectID)
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+	controlled, err := control(project.ID, name)
+	switch {
+	case errors.Is(err, worker.ErrNotFound):
+		fail(w, r, http.StatusNotFound, CodeNotFound, fmt.Sprintf("unknown worker in project %s: %s", project.ID, name))
+	case errors.Is(err, worker.ErrTransition), errors.Is(err, worker.ErrGuard), errors.Is(err, worker.ErrClosed):
+		fail(w, r, http.StatusConflict, CodeConflict, err.Error())
+	case err != nil:
+		fail(w, r, http.StatusInternalServerError, CodeInternal, err.Error())
+	default:
+		reply(w, r, status, viewWorker(controlled))
 	}
 }
